@@ -67,6 +67,7 @@ if file and 'video' in file.type:
     vid = VideoInfo.from_video_path(path)
     width, height = vid.resolution_wh
     mode = sb.selectbox('Draw', ('line', 'rect', 'polygon', 'transform'))
+    text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
     canvas = st_canvas(
         stroke_width=2,
         fill_color='#ffffff55',
@@ -106,18 +107,19 @@ if file and 'video' in file.type:
         ]
         sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
 
-    line = LineZoneAnnotator(text_scale=1)
-    box = BoxAnnotator(text_scale=1)
+    line = LineZoneAnnotator(text_scale=text_scale)
+    box = BoxAnnotator(text_scale=text_scale)
     colors = ColorPalette.default()
     zones = [
         PolygonZone(polygon=p, frame_resolution_wh=vid.resolution_wh) for p in polygons
     ]
     zone_annotators = [
-        PolygonZoneAnnotator(text_scale=1, zone=z, color=colors.by_idx(i))
+        PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=colors.by_idx(i))
         for i, z in enumerate(zones)
     ]
     box_annotators = [
-        BoxAnnotator(text_scale=1, color=colors.by_idx(i)) for i in range(len(polygons))
+        BoxAnnotator(text_scale=text_scale, color=colors.by_idx(i))
+        for i in range(len(polygons))
     ]
     if which('ffmpeg'):
         trimmed = sb.checkbox('Trim')
