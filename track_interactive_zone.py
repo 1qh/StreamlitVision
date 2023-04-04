@@ -45,11 +45,79 @@ def plur(n, s):
     return ''
 
 
+def get_lines_polygons(d):
+    lines = [
+        LineZone(
+            start=Point(i['left'] + i['x1'], i['top'] + i['y1']),
+            end=Point(i['left'] + i['x2'], i['top'] + i['y2']),
+        )
+        for i in d
+        if i['type'] == 'line'
+    ]
+    polygons = [
+        np.array([[x[1], x[2]] for x in k], np.int32)
+        for k in [j[:-1] for j in [i['path'] for i in draw if i['type'] == 'path']]
+    ] + [
+        np.array(
+            [
+                [i['left'], i['top']],
+                [i['left'] + i['width'], i['top']],
+                [i['left'] + i['width'], i['top'] + i['height']],
+                [i['left'], i['top'] + i['height']],
+            ],
+            np.int32,
+        )
+        for i in d
+        if i['type'] == 'rect'
+    ]
+    return lines, polygons
+
+
 def first_frame(path):
     vcap = cv2.VideoCapture(path)
     frame = Image.fromarray(cv2.cvtColor(vcap.read()[1], cv2.COLOR_BGR2RGB))
     vcap.release()
     return frame
+
+
+def annot(res, lines, line_annotator, zones, zone_annotators, box):
+    det = Detections.from_yolov8(res)
+    if res.boxes.id is not None:
+        det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
+    f = res.orig_img
+
+    for l in lines:
+        l.trigger(detections=det)
+        line_annotator.annotate(frame=f, line_counter=l)
+
+    for z, zone in zip(zones, zone_annotators):
+        z.trigger(detections=det)
+        f = zone.annotate(scene=f)
+
+    return cv2.cvtColor(
+        box.annotate(
+            scene=f,
+            detections=det,
+            labels=[
+                f'{conf:0.2f} {model.model.names[cls]} {tracker_id}'
+                for _, conf, cls, tracker_id in det
+            ],
+        ),
+        cv2.COLOR_BGR2RGB,
+    )
+
+
+def mycanvas(stroke, height, width, mode, bg, key):
+    return st_canvas(
+        stroke_width=2,
+        fill_color='#ffffff55',
+        stroke_color=stroke,
+        drawing_mode=mode,
+        background_image=bg,
+        height=height,
+        width=width,
+        key=key,
+    )
 
 
 conf = sb.slider('Threshold', max_value=1.0, value=0.25)
@@ -66,61 +134,32 @@ if file and 'video' in file.type:
 
     vid = VideoInfo.from_video_path(path)
     width, height = vid.resolution_wh
-    mode = sb.selectbox('Draw', ('line', 'rect', 'polygon', 'transform'))
-    text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
-    canvas = st_canvas(
-        stroke_width=2,
-        fill_color='#ffffff55',
-        drawing_mode=mode,
-        background_image=first_frame(path),
-        height=height,
-        width=width,
-        key='a',
-    )
+    mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
+    if sb.checkbox('Background', value=True):
+        canvas = mycanvas('#000', height, width, mode, first_frame(path), key='a')
+    else:
+        canvas = mycanvas('#fff', height, width, mode, None, key='b')
+
+    lines = []
     polygons = []
 
     if canvas.json_data is not None:
         draw = canvas.json_data['objects']
-        lines = [
-            LineZone(
-                start=Point(i['left'] + i['x1'], i['top'] + i['y1']),
-                end=Point(i['left'] + i['x2'], i['top'] + i['y2']),
-            )
-            for i in draw
-            if i['type'] == 'line'
-        ]
-        polygons = [
-            np.array([[x[1], x[2]] for x in k], np.int32)
-            for k in [j[:-1] for j in [i['path'] for i in draw if i['type'] == 'path']]
-        ] + [
-            np.array(
-                [
-                    [i['left'], i['top']],
-                    [i['left'] + i['width'], i['top']],
-                    [i['left'] + i['width'], i['top'] + i['height']],
-                    [i['left'], i['top'] + i['height']],
-                ],
-                np.int32,
-            )
-            for i in draw
-            if i['type'] == 'rect'
-        ]
+        lines, polygons = get_lines_polygons(draw)
         sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
 
-    line = LineZoneAnnotator(text_scale=text_scale)
+    text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
+    color = ColorPalette.default()
+    line_annotator = LineZoneAnnotator(text_scale=text_scale)
     box = BoxAnnotator(text_scale=text_scale)
-    colors = ColorPalette.default()
     zones = [
         PolygonZone(polygon=p, frame_resolution_wh=vid.resolution_wh) for p in polygons
     ]
     zone_annotators = [
-        PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=colors.by_idx(i))
+        PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=color.by_idx(i))
         for i, z in enumerate(zones)
     ]
-    box_annotators = [
-        BoxAnnotator(text_scale=text_scale, color=colors.by_idx(i))
-        for i in range(len(polygons))
-    ]
+
     if which('ffmpeg'):
         trimmed = sb.checkbox('Trim')
 
@@ -144,35 +183,14 @@ if file and 'video' in file.type:
             path = trim
 
         with st.empty():
-            for i in model.track(
+            for res in model.track(
                 path,
                 stream=True,
                 classes=classes,
                 conf=conf,
                 retina_masks=True,
             ):
-                det = Detections.from_yolov8(i)
-                if i.boxes.id is not None:
-                    det.tracker_id = i.boxes.id.cpu().numpy().astype(int)
-                f = i.orig_img
+                st.image(annot(res, lines, line_annotator, zones, zone_annotators, box))
 
-                for z, zone, box in zip(zones, zone_annotators, box_annotators):
-                    z.trigger(detections=det)
-                    f = box.annotate(scene=f, detections=det)
-                    f = zone.annotate(scene=f)
-
-                for l in lines:
-                    l.trigger(detections=det)
-                    line.annotate(frame=f, line_counter=l)
-
-                f = box.annotate(
-                    scene=f,
-                    detections=det,
-                    labels=[
-                        f'{conf:0.2f} {model.model.names[cls]} {tracker_id}'
-                        for _, conf, cls, tracker_id in det
-                    ],
-                )
-                st.image(cv2.cvtColor(f, cv2.COLOR_BGR2RGB))
 else:
     sb.warning('Please upload video')
