@@ -4,9 +4,11 @@ from time import gmtime, strftime
 
 import cv2
 import streamlit as st
+from av import VideoFrame
 from PIL import Image
 from streamlit import set_page_config
 from streamlit import sidebar as sb
+from streamlit_webrtc import webrtc_streamer
 from ultralytics import YOLO
 
 set_page_config(layout='wide')
@@ -22,31 +24,48 @@ def custom_classes(model):
         return list(d.keys())
 
 
-def dis(im):
-    st.image(cv2.cvtColor(im.plot(), cv2.COLOR_BGR2RGB))
-
-
 def hms(s):
     return strftime('%H:%M:%S', gmtime(s))
 
 
-conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-m = YOLO('yolov8n-seg.pt') if sb.checkbox('Segment') else YOLO('yolov8n.pt')
-classes = custom_classes(m)
-file = sb.file_uploader(' ')
+def get_frame(i):
+    return cv2.cvtColor(i.plot(), cv2.COLOR_BGR2RGB)
 
+
+def from_model(s, model):
+    return get_frame(model(s)[0])
+
+
+def infer_image(file, model):
+    st.image(from_model(Image.open(file), model))
+
+
+conf = sb.slider('Threshold', max_value=1.0, value=0.25)
+model = YOLO('yolov8n-seg.pt') if sb.checkbox('Segment') else YOLO('yolov8n.pt')
+classes = custom_classes(model)
+
+
+def mymodel(source, stream=False):
+    return model(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
+
+
+def cam_stream(frame):
+    return VideoFrame.from_ndarray(
+        from_model(frame.to_ndarray(format='bgr24'), mymodel)
+    )
+
+
+if sb.checkbox('Use Camera'):
+    picture = st.camera_input('Shoot')
+    if picture:
+        infer_image(picture, mymodel)
+    webrtc_streamer(key='a', video_frame_callback=cam_stream)
+
+file = sb.file_uploader(' ')
 if file:
     if 'image' in file.type:
         sb.image(file)
-        s = Image.open(file)
-        dis(
-            m(
-                s,
-                classes=classes,
-                conf=conf,
-                retina_masks=True,
-            )[0]
-        )
+        infer_image(file, mymodel)
 
     if 'video' in file.type:
         sb.video(file)
@@ -81,11 +100,5 @@ if file:
                 s = trim
 
             with st.empty():
-                for i in m(
-                    s,
-                    stream=True,
-                    classes=classes,
-                    conf=conf,
-                    retina_masks=True,
-                ):
-                    dis(i)
+                for i in mymodel(s, stream=True):
+                    st.image(get_frame(i))
