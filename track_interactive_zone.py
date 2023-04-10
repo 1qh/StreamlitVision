@@ -135,6 +135,7 @@ if file and 'video' in file.type:
     vid = VideoInfo.from_video_path(path)
     width, height = vid.resolution_wh
     mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
+
     if sb.checkbox('Background', value=True):
         canvas = mycanvas('#000', height, width, mode, first_frame(path), key='a')
     else:
@@ -167,10 +168,7 @@ if file and 'video' in file.type:
             length = int(vid.total_frames / vid.fps)
             begin, end = sb.slider(
                 'Trim by second',
-                value=(
-                    0,
-                    length,
-                ),
+                value=(0, length),
                 max_value=length,
             )
             begin, end = hms(begin), hms(end)

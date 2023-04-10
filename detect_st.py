@@ -41,7 +41,15 @@ def infer_image(file, model):
 
 
 conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-model = YOLO('yolov8n-seg.pt') if sb.checkbox('Segment') else YOLO('yolov8n.pt')
+model_map = {
+    'Detect': 'n',
+    'Segment': 'n-seg',
+    'Pose': 'n-pose',
+    'Classify': 'n-cls',
+}
+select = sb.selectbox('Model', model_map.keys())
+model = YOLO(f'yolov8{model_map[select]}.pt')
+
 classes = custom_classes(model)
 
 
@@ -84,10 +92,7 @@ if file:
                 )
                 begin, end = sb.slider(
                     'Trim by second',
-                    value=(
-                        0,
-                        length,
-                    ),
+                    value=(0, length),
                     max_value=length,
                 )
                 begin, end = hms(begin), hms(end)
