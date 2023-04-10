@@ -1,6 +1,7 @@
 *.jpg
 *.mp4
 *.pt
+*.pth
 *.engine
 
 # Byte-compiled / optimized / DLL files
