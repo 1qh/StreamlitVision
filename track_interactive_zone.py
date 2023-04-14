@@ -56,7 +56,7 @@ def get_lines_polygons(d):
     ]
     polygons = [
         np.array([[x[1], x[2]] for x in k], np.int32)
-        for k in [j[:-1] for j in [i['path'] for i in draw if i['type'] == 'path']]
+        for k in [j[:-1] for j in [i['path'] for i in d if i['type'] == 'path']]
     ] + [
         np.array(
             [
@@ -100,7 +100,7 @@ def annot(res, lines, line_annotator, zones, zone_annotators, box):
             detections=det,
             labels=[
                 f'{conf:0.2f} {model.model.names[cls]} {tracker_id}'
-                for _, conf, cls, tracker_id in det
+                for _, _, conf, cls, tracker_id in det
             ],
         ),
         cv2.COLOR_BGR2RGB,

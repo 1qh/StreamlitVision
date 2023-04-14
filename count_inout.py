@@ -29,7 +29,7 @@ for i in m.track(source=file, conf=conf, stream=True):
     )
     labels = [
         f'{conf:0.2f} {m.model.names[cls]} {tracker_id}'
-        for _, conf, cls, tracker_id in detections
+        for _, _, conf, cls, tracker_id in detections
     ]
     frame = box_annotator.annotate(
         scene=frame,
