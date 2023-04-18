@@ -26,15 +26,6 @@ from supervision import (
 )
 from ultralytics import YOLO
 
-model_map = {
-    'Detect': 'n',
-    'Segment': 'n-seg',
-    'Pose': 'n-pose',
-    'Classify': 'n-cls',
-}
-
-### UTILS ###
-
 
 def st_config():
     set_page_config(layout='wide')
@@ -42,8 +33,8 @@ def st_config():
         """
     <style>
     footer {visibility: hidden;}
-    # @font-face {font-family: 'SF Pro Display';}
-    # html, body, [class*="css"]  {font-family: 'SF Pro Display';}
+    @font-face {font-family: 'SF Pro Display';}
+    html, body, [class*="css"]  {font-family: 'SF Pro Display';}
     thead tr th:first-child {display:none}
     tbody th {display:none}
     </style>
@@ -62,6 +53,24 @@ def custom_classes(model):
         return list(d.keys())
 
 
+def custom_params():
+    col1, col2 = sb.columns(2)
+    with col1:
+        model_size = st.selectbox('Model size', ('n', 's', 'm', 'l', 'x'))
+    with col2:
+        model_map = {
+            'Detect': f'{model_size}',
+            'Segment': f'{model_size}-seg',
+            'Pose': f'{model_size}-pose',
+            'Classify': f'{model_size}-cls',
+        }
+        select = st.selectbox('Model', model_map.keys())
+    model = YOLO(f'yolov8{model_map[select]}.pt')
+    conf = sb.slider('Threshold', max_value=1.0, value=0.25)
+    classes = custom_classes(model)
+    return model, conf, classes
+
+
 def hms(s):
     return strftime('%H:%M:%S', gmtime(s))
 
@@ -72,35 +81,16 @@ def plur(n, s):
     return ''
 
 
-def custom_params(model_map):
-    select = sb.selectbox('Model', model_map.keys())
-    model = YOLO(f'yolov8{model_map[select]}.pt')
-    conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-    classes = custom_classes(model)
-    return model, conf, classes
+def cvt(f):
+    return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
 
 
-def prepare(file):
-    if 'video' in file.type:
-        sb.video(file)
-        path = f'up_{file.name}'
-        with open(path, 'wb') as up:
-            up.write(file.read())
-        vid = VideoInfo.from_video_path(path)
+def plot(i):
+    return cvt(i.plot())
 
-        trimmed, begin, end = False, None, None
-        if which('ffmpeg'):
-            trimmed = sb.checkbox('Trim')
-            if trimmed:
-                length = int(vid.total_frames / vid.fps)
-                begin, end = sb.slider(
-                    'Trim by second',
-                    value=(0, length),
-                    max_value=length,
-                )
-                begin, end = hms(begin), hms(end)
-                sb.write(f'Trim from {begin} to {end}')
-        return vid, path, trimmed, begin, end
+
+def one_img(file, model):
+    st.image(plot(model(Image.open(file))[0]))
 
 
 def trim_vid(file, path, begin, end):
@@ -109,60 +99,33 @@ def trim_vid(file, path, begin, end):
     return trim
 
 
-### HOME APP ###
+def first_frame(path):
+    vcap = cv2.VideoCapture(path)
+    frame = Image.fromarray(cvt(vcap.read()[1]))
+    vcap.release()
+    return frame
 
 
-def get_frame(i):
-    return cv2.cvtColor(i.plot(), cv2.COLOR_BGR2RGB)
+def prepare(file):
+    sb.video(file)
+    path = f'up_{file.name}'
+    with open(path, 'wb') as up:
+        up.write(file.read())
+    vid = VideoInfo.from_video_path(path)
 
-
-def from_model(s, model):
-    return get_frame(model(s)[0])
-
-
-def infer_image(file, model):
-    st.image(from_model(Image.open(file), model))
-
-
-def det_app(_):
-    st_config()
-
-    model, conf, classes = custom_params(model_map)
-
-    def mymodel(source, stream=False):
-        return model(
-            source, classes=classes, conf=conf, retina_masks=True, stream=stream
-        )
-
-    def cam_stream(frame):
-        return VideoFrame.from_ndarray(
-            from_model(frame.to_ndarray(format='bgr24'), mymodel)
-        )
-
-    if sb.checkbox('Use Camera'):
-        picture = st.camera_input('Shoot')
-        if picture:
-            infer_image(picture, mymodel)
-        webrtc_streamer(key='a', video_frame_callback=cam_stream)
-
-    file = sb.file_uploader(' ')
-    if file:
-        if 'image' in file.type:
-            sb.image(file)
-            infer_image(file, mymodel)
-        else:
-            vid, path, trimmed, begin, end = prepare(file)
-
-            while sb.checkbox('Run'):
-                if trimmed:
-                    path = trim_vid(file, path, begin, end)
-
-                with st.empty():
-                    for res in mymodel(path, stream=True):
-                        st.image(get_frame(res))
-
-
-### TRACK APP ###
+    trimmed, begin, end = False, None, None
+    if which('ffmpeg'):
+        trimmed = sb.checkbox('Trim')
+        if trimmed:
+            length = int(vid.total_frames / vid.fps)
+            begin, end = sb.slider(
+                'Trim by second',
+                value=(0, length),
+                max_value=length,
+            )
+            begin, end = hms(begin), hms(end)
+            sb.write(f'Trim from {begin} to {end}')
+    return vid, path, trimmed, begin, end
 
 
 def get_lines_polygons(d):
@@ -193,13 +156,6 @@ def get_lines_polygons(d):
     return lines, polygons
 
 
-def first_frame(path):
-    vcap = cv2.VideoCapture(path)
-    frame = Image.fromarray(cv2.cvtColor(vcap.read()[1], cv2.COLOR_BGR2RGB))
-    vcap.release()
-    return frame
-
-
 def mycanvas(stroke, height, width, mode, bg, key):
     return st_canvas(
         stroke_width=2,
@@ -211,6 +167,42 @@ def mycanvas(stroke, height, width, mode, bg, key):
         width=width,
         key=key,
     )
+
+
+def draw_tool(width, height, bg):
+    mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
+
+    if sb.checkbox('Background', value=True):
+        canvas = mycanvas('#000', height, width, mode, bg, key='e')
+    else:
+        canvas = mycanvas('#fff', height, width, mode, None, key='f')
+
+    lines = []
+    polygons = []
+
+    if canvas.json_data is not None:
+        draw = canvas.json_data['objects']
+        lines, polygons = get_lines_polygons(draw)
+        sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
+
+    text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
+    color = ColorPalette.default()
+    line_annotator = LineZoneAnnotator(text_scale=text_scale)
+    box = BoxAnnotator(text_scale=text_scale)
+    zones = [
+        PolygonZone(polygon=p, frame_resolution_wh=(width, height)) for p in polygons
+    ]
+    zone_annotators = [
+        PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=color.by_idx(i))
+        for i, z in enumerate(zones)
+    ]
+    for l in lines:
+        print(l.vector)
+        print(type(l))
+    for l in polygons:
+        print(l)
+        print(type(l))
+    return lines, line_annotator, zones, zone_annotators, box
 
 
 def annot(model, res, lines, line_annotator, zones, zone_annotators, box):
@@ -227,126 +219,151 @@ def annot(model, res, lines, line_annotator, zones, zone_annotators, box):
         z.trigger(detections=det)
         f = zone.annotate(scene=f)
 
-    return cv2.cvtColor(
+    return cvt(
         box.annotate(
             scene=f,
             detections=det,
             labels=[
-                f'{conf:0.2f} {model.model.names[cls]} {tracker_id}'
-                for _, _, conf, cls, tracker_id in det
+                f'{conf:0.2f} {model.model.names[cls]} {track_id}'
+                for _, _, conf, cls, track_id in det
             ],
-        ),
-        cv2.COLOR_BGR2RGB,
+        )
     )
 
 
-def track_app(_):
+def app(state):
     st_config()
-    model, conf, classes = custom_params(model_map)
+    m, conf, classes = custom_params()
+
+    def model(
+        source,
+        classes=classes,
+        conf=conf,
+        stream=False,
+        track=False,
+    ):
+        if track:
+            return m.track(
+                source, classes=classes, conf=conf, retina_masks=True, stream=stream
+            )
+        return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
+
+    def cam(frame):
+        return VideoFrame.from_ndarray(
+            plot(model(frame.to_ndarray(format='bgr24'))[0]),
+        )
+
+    def cam_track(frame):
+        return VideoFrame.from_ndarray(
+            plot(model(frame.to_ndarray(format='bgr24'), track=True)[0]),
+        )
+
+    if sb.checkbox('Use Camera'):
+        track = sb.checkbox('Track')
+
+        if track:
+            webrtc_streamer(
+                key='a',
+                video_frame_callback=cam_track,
+            )
+        else:
+            webrtc_streamer(
+                key='b',
+                video_frame_callback=cam,
+            )
+        picture = st.camera_input('Shoot')
+        if picture:
+            one_img(picture, model)
+            bg = Image.open(picture)
+            lines, line_annotator, zones, zone_annotators, box = draw_tool(
+                bg.size[0],
+                bg.size[1],
+                bg,
+            )
+
+            def cam_annot(frame):
+                return VideoFrame.from_ndarray(
+                    annot(
+                        m,
+                        model(frame.to_ndarray(format='bgr24'))[0],
+                        lines,
+                        line_annotator,
+                        zones,
+                        zone_annotators,
+                        box,
+                    ),
+                )
+
+            def cam_track_annot(frame):
+                return VideoFrame.from_ndarray(
+                    annot(
+                        m,
+                        model(frame.to_ndarray(format='bgr24'), track=True)[0],
+                        lines,
+                        line_annotator,
+                        zones,
+                        zone_annotators,
+                        box,
+                    )
+                )
+
+            if track:
+                webrtc_streamer(
+                    key='c',
+                    video_frame_callback=cam_track_annot,
+                )
+            else:
+                webrtc_streamer(
+                    key='d',
+                    video_frame_callback=cam_annot,
+                )
 
     file = sb.file_uploader(' ')
     if file:
-        vid, path, trimmed, begin, end = prepare(file)
-        mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
-        width, height = vid.resolution_wh
+        if 'image' in file.type:
+            sb.image(file)
+            one_img(file, model)
+        elif 'video' in file.type:
+            track = sb.checkbox('Track')
+            vid, path, trimmed, begin, end = prepare(file)
+            width, height = vid.resolution_wh
+            lines, line_annotator, zones, zone_annotators, box = draw_tool(
+                width,
+                height,
+                first_frame(path),
+            )
+            while sb.checkbox('Run'):
+                if trimmed:
+                    path = trim_vid(file, path, begin, end)
 
-        if sb.checkbox('Background', value=True):
-            canvas = mycanvas('#000', height, width, mode, first_frame(path), key='a')
-        else:
-            canvas = mycanvas('#fff', height, width, mode, None, key='b')
-
-        lines = []
-        polygons = []
-
-        if canvas.json_data is not None:
-            draw = canvas.json_data['objects']
-            lines, polygons = get_lines_polygons(draw)
-            sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
-
-        text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
-        color = ColorPalette.default()
-        line_annotator = LineZoneAnnotator(text_scale=text_scale)
-        box = BoxAnnotator(text_scale=text_scale)
-        zones = [
-            PolygonZone(polygon=p, frame_resolution_wh=vid.resolution_wh)
-            for p in polygons
-        ]
-        zone_annotators = [
-            PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=color.by_idx(i))
-            for i, z in enumerate(zones)
-        ]
-
-        while sb.checkbox('Run', key='r'):
-            if trimmed:
-                path = trim_vid(file, path, begin, end)
-
-            with st.empty():
-                for res in model.track(
-                    path,
-                    stream=True,
-                    classes=classes,
-                    conf=conf,
-                    retina_masks=True,
-                ):
-                    tab1, tab2 = st.tabs(['YOLO', 'Supervision'])
-                    with tab1:
-                        st.image(get_frame(res))
-                    with tab2:
-                        st.image(
-                            annot(
-                                model,
-                                res,
-                                lines,
-                                line_annotator,
-                                zones,
-                                zone_annotators,
-                                box,
+                with st.empty():
+                    for res in model(path, stream=True, track=track):
+                        tab1, tab2 = st.tabs(['YOLO', 'Supervision'])
+                        with tab1:
+                            st.image(plot(res))
+                        with tab2:
+                            st.image(
+                                annot(
+                                    m,
+                                    res,
+                                    lines,
+                                    line_annotator,
+                                    zones,
+                                    zone_annotators,
+                                    box,
+                                )
                             )
-                        )
-    else:
-        sb.warning('Please upload video')
+        else:
+            sb.warning('Please upload image/video')
 
 
-def test(_):
-    st.write('test')
-
-
-### SETUP ###
-
-
-class Det(LightningFlow):
+class YoloApp(LightningFlow):
     def configure_layout(self):
-        return StreamlitFrontend(render_fn=det_app)
-
-
-class Track(LightningFlow):
-    def configure_layout(self):
-        return StreamlitFrontend(render_fn=track_app)
-
-
-class Test(LightningFlow):
-    def configure_layout(self):
-        return StreamlitFrontend(render_fn=test)
-
-
-class LitApp(LightningFlow):
-    def __init__(self):
-        super().__init__()
-        self.det = Det()
-        self.track = Track()
-        self.test = Test()
+        return StreamlitFrontend(render_fn=app)
 
     def run(self):
-        self.det.run()
-        self.track.run()
-        self.test.run()
-
-    def configure_layout(self):
-        return [
-            {'name': 'home', 'content': self.det},
-            {'name': 'track', 'content': self.track},
-            {'name': 'test', 'content': self.test},
-        ]
+        pass
 
 
-app = LightningApp(LitApp())
+lit = LightningApp(YoloApp())
+app('')

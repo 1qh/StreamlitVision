@@ -5,6 +5,7 @@
 *.pt
 *.pth
 *.engine
+.wip
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
