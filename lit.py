@@ -15,10 +15,12 @@ from streamlit_drawable_canvas import st_canvas
 from streamlit_webrtc import webrtc_streamer
 from supervision import (
     BoxAnnotator,
+    Color,
     ColorPalette,
     Detections,
     LineZone,
     LineZoneAnnotator,
+    MaskAnnotator,
     Point,
     PolygonZone,
     PolygonZoneAnnotator,
@@ -66,9 +68,10 @@ def custom_params():
         }
         select = st.selectbox('Model', model_map.keys())
     model = YOLO(f'yolov8{model_map[select]}.pt')
+    task = model.overrides['task']
     conf = sb.slider('Threshold', max_value=1.0, value=0.25)
     classes = custom_classes(model)
-    return model, conf, classes
+    return model, task, conf, classes
 
 
 def hms(s):
@@ -76,9 +79,7 @@ def hms(s):
 
 
 def plur(n, s):
-    if n:
-        return f"\n- {n} {s}{'s'[:n^1]}"
-    return ''
+    return f"\n- {n} {s}{'s'[:n^1]}" if n else ''
 
 
 def cvt(f):
@@ -100,9 +101,9 @@ def trim_vid(file, path, begin, end):
 
 
 def first_frame(path):
-    vcap = cv2.VideoCapture(path)
-    frame = Image.fromarray(cvt(vcap.read()[1]))
-    vcap.release()
+    cap = cv2.VideoCapture(path)
+    frame = Image.fromarray(cvt(cap.read()[1]))
+    cap.release()
     return frame
 
 
@@ -169,7 +170,7 @@ def mycanvas(stroke, height, width, mode, bg, key):
     )
 
 
-def draw_tool(width, height, bg):
+def draw_tool(task, width, height, bg):
     mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
 
     if sb.checkbox('Background', value=True):
@@ -185,55 +186,101 @@ def draw_tool(width, height, bg):
         lines, polygons = get_lines_polygons(draw)
         sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
 
-    text_scale = sb.slider('Text size', 0.0, 2.0, 1.0)
+    thickness = sb.slider('Thickness', 0, 10, 1)
+    text_scale = sb.slider('Text size', 0.0, 2.0, 0.5)
+    text_offset = sb.slider('Text offset', 0.0, 10.0, 1.0)
+    text_padding = sb.slider('Text padding', 0, 10, 2)
+    text_color = Color.from_hex(sb.color_picker('Text color', '#000000'))
+
     color = ColorPalette.default()
-    line_annotator = LineZoneAnnotator(text_scale=text_scale)
-    box = BoxAnnotator(text_scale=text_scale)
+
+    line_annotator = LineZoneAnnotator(
+        thickness=thickness,
+        text_color=text_color,
+        text_scale=text_scale,
+        text_offset=text_offset,
+        text_padding=text_padding,
+    )
     zones = [
-        PolygonZone(polygon=p, frame_resolution_wh=(width, height)) for p in polygons
+        PolygonZone(
+            polygon=p,
+            frame_resolution_wh=(width, height),
+        )
+        for p in polygons
     ]
     zone_annotators = [
-        PolygonZoneAnnotator(text_scale=text_scale, zone=z, color=color.by_idx(i))
+        PolygonZoneAnnotator(
+            thickness=thickness,
+            text_color=text_color,
+            text_scale=text_scale,
+            text_padding=text_padding,
+            zone=z,
+            color=color.by_idx(i),
+        )
         for i, z in enumerate(zones)
     ]
+    box, mask, mask_opacity = None, None, None
+    col1, col2 = sb.columns(2)
+    with col1:
+        if st.checkbox('Box', value=True):
+            box = BoxAnnotator(
+                thickness=thickness,
+                text_color=text_color,
+                text_scale=text_scale,
+                text_padding=text_padding,
+            )
+    with col2:
+        if task == 'segment':
+            if st.checkbox('Mask', value=True):
+                mask = MaskAnnotator()
+                mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
     for l in lines:
         print(l.vector)
-        print(type(l))
     for l in polygons:
         print(l)
-        print(type(l))
-    return lines, line_annotator, zones, zone_annotators, box
+    return lines, line_annotator, zones, zone_annotators, box, mask, mask_opacity
 
 
-def annot(model, res, lines, line_annotator, zones, zone_annotators, box):
+def annot(
+    model, res, lines, line_annotator, zones, zone_annotators, box, mask, mask_opacity
+):
     det = Detections.from_yolov8(res)
     if res.boxes.id is not None:
         det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
+    if res.masks is not None:
+        det.mask = res.masks.data
     f = res.orig_img
 
+    if box:
+        f = box.annotate(
+            scene=f,
+            detections=det,
+            labels=[
+                f'{conf:0.2f} {model.model.names[cls]}'
+                + (f' {track_id}' if track_id else '')
+                for _, _, conf, cls, track_id in det
+            ],
+        )
+    if mask:
+        f = mask.annotate(
+            scene=f,
+            detections=det,
+            opacity=mask_opacity,
+        )
     for l in lines:
         l.trigger(detections=det)
         line_annotator.annotate(frame=f, line_counter=l)
 
     for z, zone in zip(zones, zone_annotators):
+        det.mask = None  # bug in supervision
         z.trigger(detections=det)
         f = zone.annotate(scene=f)
-
-    return cvt(
-        box.annotate(
-            scene=f,
-            detections=det,
-            labels=[
-                f'{conf:0.2f} {model.model.names[cls]} {track_id}'
-                for _, _, conf, cls, track_id in det
-            ],
-        )
-    )
+    return cvt(f)
 
 
 def app(state):
     st_config()
-    m, conf, classes = custom_params()
+    m, task, conf, classes = custom_params()
 
     def model(
         source,
@@ -259,7 +306,9 @@ def app(state):
         )
 
     if sb.checkbox('Use Camera'):
-        track = sb.checkbox('Track')
+        track = False
+        if task != 'classify':
+            track = sb.checkbox('Track')
 
         if track:
             webrtc_streamer(
@@ -275,7 +324,16 @@ def app(state):
         if picture:
             one_img(picture, model)
             bg = Image.open(picture)
-            lines, line_annotator, zones, zone_annotators, box = draw_tool(
+            (
+                lines,
+                line_annotator,
+                zones,
+                zone_annotators,
+                box,
+                mask,
+                mask_opacity,
+            ) = draw_tool(
+                task,
                 bg.size[0],
                 bg.size[1],
                 bg,
@@ -291,6 +349,8 @@ def app(state):
                         zones,
                         zone_annotators,
                         box,
+                        mask,
+                        mask_opacity,
                     ),
                 )
 
@@ -298,12 +358,17 @@ def app(state):
                 return VideoFrame.from_ndarray(
                     annot(
                         m,
-                        model(frame.to_ndarray(format='bgr24'), track=True)[0],
+                        model(
+                            frame.to_ndarray(format='bgr24'),
+                            track=True,
+                        )[0],
                         lines,
                         line_annotator,
                         zones,
                         zone_annotators,
                         box,
+                        mask,
+                        mask_opacity,
                     )
                 )
 
@@ -324,40 +389,58 @@ def app(state):
             sb.image(file)
             one_img(file, model)
         elif 'video' in file.type:
-            track = sb.checkbox('Track')
             vid, path, trimmed, begin, end = prepare(file)
             width, height = vid.resolution_wh
-            lines, line_annotator, zones, zone_annotators, box = draw_tool(
-                width,
-                height,
-                first_frame(path),
-            )
-            while sb.checkbox('Run'):
+            track = False
+            if task != 'classify':
+                track = sb.checkbox('Track')
+                (
+                    lines,
+                    line_annotator,
+                    zones,
+                    zone_annotators,
+                    box,
+                    mask,
+                    mask_opacity,
+                ) = draw_tool(
+                    task,
+                    width,
+                    height,
+                    first_frame(path),
+                )
+            sv_out = None
+            while sb.checkbox('Run', key='r'):
                 if trimmed:
                     path = trim_vid(file, path, begin, end)
 
                 with st.empty():
                     for res in model(path, stream=True, track=track):
-                        tab1, tab2 = st.tabs(['YOLO', 'Supervision'])
-                        with tab1:
-                            st.image(plot(res))
-                        with tab2:
-                            st.image(
-                                annot(
-                                    m,
-                                    res,
-                                    lines,
-                                    line_annotator,
-                                    zones,
-                                    zone_annotators,
-                                    box,
-                                )
+                        yolo_out = plot(res)
+                        sv_out = (
+                            annot(
+                                m,
+                                res,
+                                lines,
+                                line_annotator,
+                                zones,
+                                zone_annotators,
+                                box,
+                                mask,
+                                mask_opacity,
                             )
+                            if task != 'classify'
+                            else yolo_out
+                        )
+                        tab1, tab2 = st.tabs(['Supervision', 'YOLO'])
+                        with tab1:
+                            st.image(sv_out)
+                        with tab2:
+                            st.image(yolo_out)
         else:
             sb.warning('Please upload image/video')
 
 
-class YoloApp(LightningFlow):
+class YoloFlow(LightningFlow):
     def configure_layout(self):
         return StreamlitFrontend(render_fn=app)
 
@@ -365,5 +448,6 @@ class YoloApp(LightningFlow):
         pass
 
 
-lit = LightningApp(YoloApp())
-app('')
+lit = LightningApp(YoloFlow())
+
+app('')  # comment this line to run in lightning AI
