@@ -436,4 +436,4 @@ class YoloFlow(LightningFlow):
 
 lit = LightningApp(YoloFlow())
 
-app('')  # comment this line to run in lightning AI
+# app('')  # comment this line to run in lightning AI
