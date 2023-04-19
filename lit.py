@@ -1,5 +1,7 @@
+import json
 import os
 from shutil import which
+from subprocess import check_output
 from time import gmtime, strftime
 
 import cv2
@@ -170,7 +172,7 @@ def mycanvas(stroke, height, width, mode, bg, key):
     )
 
 
-def draw_tool(task, width, height, bg):
+def draw_tool(model, task, width, height, bg):
     mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
 
     if sb.checkbox('Background', value=True):
@@ -190,7 +192,16 @@ def draw_tool(task, width, height, bg):
     text_scale = sb.slider('Text size', 0.0, 2.0, 0.5)
     text_offset = sb.slider('Text offset', 0.0, 10.0, 1.0)
     text_padding = sb.slider('Text padding', 0, 10, 2)
-    text_color = Color.from_hex(sb.color_picker('Text color', '#000000'))
+    text_color = sb.color_picker('Text color', '#000000')
+
+    config = {}
+    config['model'] = model.ckpt_path
+    config['visual'] = {}
+
+    for i in ('thickness', 'text_scale', 'text_offset', 'text_padding', 'text_color'):
+        config['visual'][i] = locals()[i]
+
+    text_color = Color.from_hex(text_color)
 
     color = ColorPalette.default()
 
@@ -222,22 +233,32 @@ def draw_tool(task, width, height, bg):
     box, mask, mask_opacity = None, None, None
     col1, col2 = sb.columns(2)
     with col1:
-        if st.checkbox('Box', value=True):
+        use_box = st.checkbox('Box', value=True)
+        if use_box:
             box = BoxAnnotator(
                 thickness=thickness,
                 text_color=text_color,
                 text_scale=text_scale,
                 text_padding=text_padding,
             )
+        config['box'] = use_box
     with col2:
         if task == 'segment':
-            if st.checkbox('Mask', value=True):
+            use_mask = st.checkbox('Mask', value=True)
+            if use_mask:
                 mask = MaskAnnotator()
                 mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
-    for l in lines:
-        print(l.vector)
-    for l in polygons:
-        print(l)
+                config['mask_opacity'] = mask_opacity
+            config['mask'] = use_mask
+    config['lines'] = [
+        ((l.vector.start.x, l.vector.start.y), (l.vector.end.x, l.vector.end.y))
+        for l in lines
+    ]
+    config['polygons'] = [p.tolist() for p in polygons]
+
+    with open('config.json', 'w') as f:
+        json.dump(config, f)
+
     return lines, line_annotator, zones, zone_annotators, box, mask, mask_opacity
 
 
@@ -296,34 +317,37 @@ def app(state):
         return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
 
     def cam(frame):
-        return VideoFrame.from_ndarray(
-            plot(model(frame.to_ndarray(format='bgr24'))[0]),
-        )
+        f = plot(model(frame.to_ndarray(format='bgr24'))[0])
+        # print(f.shape)
+        # oh my god, it took me so long to realize this increases through time
+        return VideoFrame.from_ndarray(f)
 
     def cam_track(frame):
-        return VideoFrame.from_ndarray(
-            plot(model(frame.to_ndarray(format='bgr24'), track=True)[0]),
-        )
+        f = plot(model(frame.to_ndarray(format='bgr24'), track=True)[0])
+        return VideoFrame.from_ndarray(f)
 
     if sb.checkbox('Use Camera'):
         track = False
+        reso = check_output(
+            "v4l2-ctl -d /dev/video0 --list-formats-ext | grep Size: | tail -1 | awk '{print $NF}'",
+            shell=True,
+        )
+        width, height = [int(i) for i in reso.decode().split('x')]
         if task != 'classify':
             track = sb.checkbox('Track')
 
         if track:
-            webrtc_streamer(
-                key='a',
-                video_frame_callback=cam_track,
-            )
+            webrtc_streamer(key='a', video_frame_callback=cam_track)
         else:
-            webrtc_streamer(
-                key='b',
-                video_frame_callback=cam,
-            )
+            webrtc_streamer(key='b', video_frame_callback=cam)
+
+        if sb.button('Native Run'):
+            os.system(f'./native.py --path 0')
+
         picture = st.camera_input('Shoot')
         if picture:
             one_img(picture, model)
-            bg = Image.open(picture)
+            bg = Image.open(picture).resize((width, height))
             (
                 lines,
                 line_annotator,
@@ -333,55 +357,12 @@ def app(state):
                 mask,
                 mask_opacity,
             ) = draw_tool(
+                m,
                 task,
                 bg.size[0],
                 bg.size[1],
                 bg,
             )
-
-            def cam_annot(frame):
-                return VideoFrame.from_ndarray(
-                    annot(
-                        m,
-                        model(frame.to_ndarray(format='bgr24'))[0],
-                        lines,
-                        line_annotator,
-                        zones,
-                        zone_annotators,
-                        box,
-                        mask,
-                        mask_opacity,
-                    ),
-                )
-
-            def cam_track_annot(frame):
-                return VideoFrame.from_ndarray(
-                    annot(
-                        m,
-                        model(
-                            frame.to_ndarray(format='bgr24'),
-                            track=True,
-                        )[0],
-                        lines,
-                        line_annotator,
-                        zones,
-                        zone_annotators,
-                        box,
-                        mask,
-                        mask_opacity,
-                    )
-                )
-
-            if track:
-                webrtc_streamer(
-                    key='c',
-                    video_frame_callback=cam_track_annot,
-                )
-            else:
-                webrtc_streamer(
-                    key='d',
-                    video_frame_callback=cam_annot,
-                )
 
     file = sb.file_uploader(' ')
     if file:
@@ -403,12 +384,17 @@ def app(state):
                     mask,
                     mask_opacity,
                 ) = draw_tool(
+                    m,
                     task,
                     width,
                     height,
                     first_frame(path),
                 )
             sv_out = None
+
+            if sb.button('Native Run'):
+                os.system(f'./native.py --path {path}')
+
             while sb.checkbox('Run', key='r'):
                 if trimmed:
                     path = trim_vid(file, path, begin, end)
