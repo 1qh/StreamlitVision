@@ -26,7 +26,7 @@ def cvt(f):
 
 
 def annot(
-    model,
+    allclasses,
     res,
     lines,
     line_annotator,
@@ -48,8 +48,7 @@ def annot(
             scene=f,
             detections=det,
             labels=[
-                f'{conf:0.2f} {model.model.names[cls]}'
-                + (f' {track_id}' if track_id else '')
+                f'{conf:0.2f} {allclasses[cls]}' + (f' {track_id}' if track_id else '')
                 for _, _, conf, cls, track_id in det
             ],
         )
@@ -72,7 +71,7 @@ def annot(
 
 def app(path, config='config.json'):
     cams = [i for i in range(-1, 2, 1)]
-    if int(path) in cams:
+    if '.' not in path and int(path) in cams:
         path = int(path)
         reso = check_output(
             "v4l2-ctl -d /dev/video0 --list-formats-ext | grep Size: | tail -1 | awk '{print $NF}'",
@@ -84,7 +83,9 @@ def app(path, config='config.json'):
         width, height = vid.resolution_wh
 
     config = json.load(open(config))
-
+    classes = config['classes']
+    conf = config['conf']
+    track = config['track']
     ckpt = config['model']
     visual = config['visual']
     lines = config['lines']
@@ -148,7 +149,22 @@ def app(path, config='config.json'):
         mask = MaskAnnotator()
         mask_opacity = config['mask_opacity'] if 'mask_opacity' in config else 0.5
 
-    model = YOLO(ckpt)
+    m = YOLO(ckpt)
+    allclasses = m.model.names
+
+    def model(
+        source,
+        classes=classes,
+        conf=conf,
+        stream=False,
+        track=False,
+    ):
+        if track:
+            return m.track(
+                source, classes=classes, conf=conf, retina_masks=True, stream=stream
+            )
+        return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
+
     if type(path) == int:
         cap = cv2.VideoCapture(0)
         codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
@@ -158,9 +174,9 @@ def app(path, config='config.json'):
         cap.set(4, height)
         while True:
             _, f = cap.read()
-            res = model.track(f, retina_masks=True)[0]
+            res = model(f, track=track)[0]
             frame = annot(
-                model,
+                allclasses,
                 res,
                 lines,
                 line_annotator,
@@ -176,13 +192,13 @@ def app(path, config='config.json'):
         cap.release()
         cv2.destroyAllWindows()
     else:
-        for res in model.track(
+        for res in model(
             path,
             stream=True,
-            retina_masks=True,
+            track=track,
         ):
             f = annot(
-                model,
+                allclasses,
                 res,
                 lines,
                 line_annotator,

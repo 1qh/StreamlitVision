@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from shutil import which
 from subprocess import check_output
 from time import gmtime, strftime
@@ -11,6 +12,7 @@ from av import VideoFrame
 from lightning import LightningApp, LightningFlow
 from lightning.app.frontend import StreamlitFrontend
 from PIL import Image
+from psutil import process_iter
 from streamlit import set_page_config
 from streamlit import sidebar as sb
 from streamlit_drawable_canvas import st_canvas
@@ -27,8 +29,12 @@ from supervision import (
     PolygonZone,
     PolygonZoneAnnotator,
     VideoInfo,
+    get_polygon_center,
 )
 from ultralytics import YOLO
+
+_shape = None
+_lines, _zones, _zone_ann = [], [], []
 
 
 def st_config():
@@ -57,7 +63,7 @@ def custom_classes(model):
         return list(d.keys())
 
 
-def custom_params():
+def custom_params(config):
     col1, col2 = sb.columns(2)
     with col1:
         model_size = st.selectbox('Model size', ('n', 's', 'm', 'l', 'x'))
@@ -69,11 +75,16 @@ def custom_params():
             'Classify': f'{model_size}-cls',
         }
         select = st.selectbox('Model', model_map.keys())
+
     model = YOLO(f'yolov8{model_map[select]}.pt')
-    task = model.overrides['task']
     conf = sb.slider('Threshold', max_value=1.0, value=0.25)
     classes = custom_classes(model)
-    return model, task, conf, classes
+
+    config['model'] = model.ckpt_path
+    config['conf'] = conf
+    config['classes'] = classes
+
+    return config, model, conf, classes
 
 
 def hms(s):
@@ -172,7 +183,7 @@ def mycanvas(stroke, height, width, mode, bg, key):
     )
 
 
-def draw_tool(model, task, width, height, bg):
+def draw_tool(config, task, width, height, bg):
     mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
 
     if sb.checkbox('Background', value=True):
@@ -188,16 +199,19 @@ def draw_tool(model, task, width, height, bg):
         lines, polygons = get_lines_polygons(draw)
         sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
 
+    config['lines'] = [
+        ((l.vector.start.x, l.vector.start.y), (l.vector.end.x, l.vector.end.y))
+        for l in lines
+    ]
+    config['polygons'] = [p.tolist() for p in polygons]
+
     thickness = sb.slider('Thickness', 0, 10, 1)
     text_scale = sb.slider('Text size', 0.0, 2.0, 0.5)
     text_offset = sb.slider('Text offset', 0.0, 10.0, 1.0)
     text_padding = sb.slider('Text padding', 0, 10, 2)
     text_color = sb.color_picker('Text color', '#000000')
 
-    config = {}
-    config['model'] = model.ckpt_path
     config['visual'] = {}
-
     for i in ('thickness', 'text_scale', 'text_offset', 'text_padding', 'text_color'):
         config['visual'][i] = locals()[i]
 
@@ -250,20 +264,29 @@ def draw_tool(model, task, width, height, bg):
                 mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
                 config['mask_opacity'] = mask_opacity
             config['mask'] = use_mask
-    config['lines'] = [
-        ((l.vector.start.x, l.vector.start.y), (l.vector.end.x, l.vector.end.y))
-        for l in lines
-    ]
-    config['polygons'] = [p.tolist() for p in polygons]
 
-    with open('config.json', 'w') as f:
-        json.dump(config, f)
-
-    return lines, line_annotator, zones, zone_annotators, box, mask, mask_opacity
+    return (
+        config,
+        lines,
+        line_annotator,
+        zones,
+        zone_annotators,
+        box,
+        mask,
+        mask_opacity,
+    )
 
 
 def annot(
-    model, res, lines, line_annotator, zones, zone_annotators, box, mask, mask_opacity
+    allclasses,
+    res,
+    lines,
+    line_annotator,
+    zones,
+    zone_annotators,
+    box,
+    mask,
+    mask_opacity,
 ):
     det = Detections.from_yolov8(res)
     if res.boxes.id is not None:
@@ -277,8 +300,7 @@ def annot(
             scene=f,
             detections=det,
             labels=[
-                f'{conf:0.2f} {model.model.names[cls]}'
-                + (f' {track_id}' if track_id else '')
+                f'{conf:0.2f} {allclasses[cls]}' + (f' {track_id}' if track_id else '')
                 for _, _, conf, cls, track_id in det
             ],
         )
@@ -299,9 +321,53 @@ def annot(
     return cvt(f)
 
 
+def native_run(config, path):
+    col1, col2 = sb.columns(2)
+    with col1:
+        if st.button('Save config'):
+            with open('config.json', 'w') as f:
+                json.dump(config, f)
+    with col2:
+        if st.button('Native Run'):
+            os.system(f'./native.py --path {path}')
+
+
+def update_annot(f, height, lines, zones, _zone_ann):
+    _shape = f.shape
+    scale = _shape[0] / height
+    _lines = [
+        LineZone(
+            start=Point(
+                l.vector.start.x * scale,
+                l.vector.start.y * scale,
+            ),
+            end=Point(
+                l.vector.end.x * scale,
+                l.vector.end.y * scale,
+            ),
+        )
+        for l in lines
+    ]
+    _zones = [
+        PolygonZone(
+            polygon=(z.polygon * scale).astype(int),
+            frame_resolution_wh=(_shape[1], _shape[0]),
+        )
+        for z in zones
+    ]
+    for z, ann in zip(_zones, _zone_ann):
+        ann.zone = z
+        ann.center = get_polygon_center(polygon=z.polygon)
+
+    return _lines, _zones, _zone_ann, _shape
+
+
 def app(state):
     st_config()
-    m, task, conf, classes = custom_params()
+    config = {}
+    config, m, conf, classes = custom_params(config)
+    allclasses = m.model.names
+    task = m.overrides['task']
 
     def model(
         source,
@@ -318,37 +384,61 @@ def app(state):
 
     def cam(frame):
         f = plot(model(frame.to_ndarray(format='bgr24'))[0])
-        # print(f.shape)
-        # oh my god, it took me so long to realize this increases through time
         return VideoFrame.from_ndarray(f)
 
     def cam_track(frame):
         f = plot(model(frame.to_ndarray(format='bgr24'), track=True)[0])
         return VideoFrame.from_ndarray(f)
 
-    if sb.checkbox('Use Camera'):
-        track = False
+    file = sb.file_uploader(' ')
+    use_cam = sb.checkbox('Use Camera', value=True if not file else False)
+
+    if use_cam:
+        file = None
         reso = check_output(
             "v4l2-ctl -d /dev/video0 --list-formats-ext | grep Size: | tail -1 | awk '{print $NF}'",
             shell=True,
         )
         width, height = [int(i) for i in reso.decode().split('x')]
+
+        picture = None
+        if sb.checkbox('Annotate from selfie'):
+            picture = st.camera_input('Shoot')
+
+        track = True
         if task != 'classify':
             track = sb.checkbox('Track')
+        else:
+            track = False
+        config['track'] = track
 
         if track:
-            webrtc_streamer(key='a', video_frame_callback=cam_track)
+            webrtc_streamer(
+                key='a',
+                video_frame_callback=cam_track,
+                media_stream_constraints={
+                    'video': {
+                        'width': {'min': width},
+                        'height': {'min': height},
+                    }
+                },
+            )
         else:
-            webrtc_streamer(key='b', video_frame_callback=cam)
-
-        if sb.button('Native Run'):
-            os.system(f'./native.py --path 0')
-
-        picture = st.camera_input('Shoot')
+            webrtc_streamer(
+                key='b',
+                video_frame_callback=cam,
+                media_stream_constraints={
+                    'video': {
+                        'width': {'min': width},
+                        'height': {'min': height},
+                    }
+                },
+            )
         if picture:
             one_img(picture, model)
             bg = Image.open(picture).resize((width, height))
             (
+                config,
                 lines,
                 line_annotator,
                 zones,
@@ -357,25 +447,118 @@ def app(state):
                 mask,
                 mask_opacity,
             ) = draw_tool(
-                m,
+                config,
                 task,
-                bg.size[0],
-                bg.size[1],
+                width,
+                height,
                 bg,
             )
+            native_run(config, 0)
+            cam_open = sb.checkbox('Run')
+            cap = cv2.VideoCapture(0)
+            codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
+            cap.set(6, codec)
+            cap.set(5, 30)
+            cap.set(3, width)
+            cap.set(4, height)
+            with st.empty():
+                while cam_open:
+                    _, f = cap.read()
+                    res = model(f, track=track)[0]
+                    frame = annot(
+                        allclasses,
+                        res,
+                        lines,
+                        line_annotator,
+                        zones,
+                        zone_annotators,
+                        box,
+                        mask,
+                        mask_opacity,
+                    )
+                    st.image(frame)
+            cap.release()
 
-    file = sb.file_uploader(' ')
+            # oh my god, it took me so long to realize the frame bigger through time
+            def cam_annot(frame):
+                f = frame.to_ndarray(format='bgr24')
+                global _shape, _lines, _zones, _zone_ann
+                _zone_ann = zone_annotators
+                if f.shape != _shape:
+                    _lines, _zones, _zone_ann, _shape = update_annot(
+                        f, height, lines, zones, _zone_ann
+                    )
+                f = annot(
+                    allclasses,
+                    model(f)[0],
+                    _lines,
+                    line_annotator,
+                    _zones,
+                    _zone_ann,
+                    box,
+                    mask,
+                    mask_opacity,
+                )
+                return VideoFrame.from_ndarray(f)
+
+            def cam_track_annot(frame):
+                f = frame.to_ndarray(format='bgr24')
+                global _shape, _lines, _zones, _zone_ann
+                _zone_ann = zone_annotators
+                if f.shape != _shape:
+                    _lines, _zones, _zone_ann, _shape = update_annot(
+                        f, height, lines, zones, _zone_ann
+                    )
+                f = annot(
+                    allclasses,
+                    model(frame.to_ndarray(format='bgr24'), track=True)[0],
+                    _lines,
+                    line_annotator,
+                    _zones,
+                    _zone_ann,
+                    box,
+                    mask,
+                    mask_opacity,
+                )
+                return VideoFrame.from_ndarray(f)
+
+            if track:
+                webrtc_streamer(
+                    key='c',
+                    video_frame_callback=cam_track_annot,
+                    media_stream_constraints={
+                        'video': {
+                            'width': {'min': width},
+                            'height': {'min': height},
+                        }
+                    },
+                )
+            else:
+                webrtc_streamer(
+                    key='d',
+                    video_frame_callback=cam_annot,
+                    media_stream_constraints={
+                        'video': {
+                            'width': {'min': width},
+                            'height': {'min': height},
+                        }
+                    },
+                )
+
     if file:
         if 'image' in file.type:
             sb.image(file)
             one_img(file, model)
+
         elif 'video' in file.type:
             vid, path, trimmed, begin, end = prepare(file)
             width, height = vid.resolution_wh
-            track = False
+
+            track = True
             if task != 'classify':
-                track = sb.checkbox('Track')
+                track = sb.checkbox('Track', value=True)
                 (
+                    config,
                     lines,
                     line_annotator,
                     zones,
@@ -384,17 +567,18 @@ def app(state):
                     mask,
                     mask_opacity,
                 ) = draw_tool(
-                    m,
+                    config,
                     task,
                     width,
                     height,
                     first_frame(path),
                 )
+            else:
+                track = False
+            config['track'] = track
+
             sv_out = None
-
-            if sb.button('Native Run'):
-                os.system(f'./native.py --path {path}')
-
+            native_run(config, path)
             while sb.checkbox('Run', key='r'):
                 if trimmed:
                     path = trim_vid(file, path, begin, end)
@@ -404,7 +588,7 @@ def app(state):
                         yolo_out = plot(res)
                         sv_out = (
                             annot(
-                                m,
+                                allclasses,
                                 res,
                                 lines,
                                 line_annotator,
@@ -436,4 +620,8 @@ class YoloFlow(LightningFlow):
 
 lit = LightningApp(YoloFlow())
 
-# app('')  # comment this line to run in lightning AI
+running_apps = [i for i in [p.cmdline() for p in process_iter()] if 'run' in i]
+this_process = next(p for p in running_apps if any(Path(__file__).stem in a for a in p))
+
+if 'app' not in this_process:
+    app('')
