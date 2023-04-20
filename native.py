@@ -40,7 +40,7 @@ def annot(
     if res.boxes.id is not None:
         det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
     if res.masks is not None:
-        det.mask = res.masks.data
+        det.mask = res.masks.data.cpu().numpy()
     f = res.orig_img
 
     if box:
@@ -63,7 +63,6 @@ def annot(
         line_annotator.annotate(frame=f, line_counter=l)
 
     for z, zone in zip(zones, zone_annotators):
-        det.mask = None  # bug in supervision
         z.trigger(detections=det)
         f = zone.annotate(scene=f)
     return f
