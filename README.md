@@ -65,7 +65,10 @@ pip install lap
     - Line thickness
     - Mask opacity
 
-- Run in native OpenCV with saved visual elements configuration
+- **PRODUCTION READY**
+
+  - Save drawed visual elements & config in JSON
+  - Script to load config to run in native OpenCV
 
 <details><summary>Note</summary>
 
