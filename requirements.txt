@@ -1,0 +1,5 @@
+lightning
+streamlit_drawable_canvas
+streamlit_webrtc
+supervision
+ultralytics
