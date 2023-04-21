@@ -21,7 +21,7 @@ pip install lap
 
 # Features
 
-- Run on LightningAI/Streamlit
+- Run locally on [LightningAI](https://github.com/lightning-ai/lightning) / [Streamlit](https://github.com/streamlit/streamlit)
 
   - Model
 
@@ -30,32 +30,40 @@ pip install lap
     - Pose estimation
     - Image classification
 
-  - on
+  - On
 
-    - image
-    - video
-    - webcam
+    - Image
+    - Video
+    - Webcam
 
-  - with ability to
+  - With ability to
 
-    - turn tracking on/off
-    - adjust confidence threshold
-    - filter by class
-    - trim video
+    - Turn tracking on/off
+    - Adjust confidence threshold
+    - Filter by class
+    - Trim video
 
 - Draw visual elements interactively
 
-  - line count (in/out)
-  - polygon zone count
+  - Line count (in/out)
+  - Polygon zone count
 
-- Adjust visual elements
+- Customize visual elements
 
-  - text size
-  - text color
-  - text padding
-  - text offset
-  - line thickness
-  - mask opacity
+  - Toggle on/off
+
+    - Box
+    - Mask
+    - Area
+
+  - Adjust
+
+    - Text size
+    - Text color
+    - Text padding
+    - Text offset
+    - Line thickness
+    - Mask opacity
 
 - Run in native OpenCV with saved visual elements configuration
 
