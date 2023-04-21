@@ -17,6 +17,7 @@ from supervision import (
     PolygonZone,
     PolygonZoneAnnotator,
     VideoInfo,
+    draw_text,
 )
 from ultralytics import YOLO
 
@@ -35,6 +36,7 @@ def annot(
     box,
     mask,
     mask_opacity,
+    area,
 ):
     det = Detections.from_yolov8(res)
     if res.boxes.id is not None:
@@ -58,6 +60,16 @@ def annot(
             detections=det,
             opacity=mask_opacity,
         )
+    if mask and area:
+        for t, a in zip(det.area, det.xyxy.astype(int)):
+            draw_text(
+                scene=f,
+                text=f'{int(t)}',
+                text_anchor=Point(x=(a[0] + a[2]) // 2, y=(a[1] + a[3]) // 2),
+                text_color=line_annotator.text_color,
+                text_scale=line_annotator.text_scale,
+                text_padding=line_annotator.text_padding,
+            )
     for l in lines:
         l.trigger(detections=det)
         line_annotator.annotate(frame=f, line_counter=l)
@@ -68,17 +80,17 @@ def annot(
     return f
 
 
-def app(path, config='config.json'):
+def app(source, config='config.json'):
     cams = [i for i in range(-1, 2, 1)]
-    if '.' not in path and int(path) in cams:
-        path = int(path)
+    if '.' not in source and int(source) in cams:
+        source = int(source)
         reso = check_output(
             "v4l2-ctl -d /dev/video0 --list-formats-ext | grep Size: | tail -1 | awk '{print $NF}'",
             shell=True,
         )
         width, height = [int(i) for i in reso.decode().split('x')]
     else:
-        vid = VideoInfo.from_video_path(path)
+        vid = VideoInfo.from_video_path(source)
         width, height = vid.resolution_wh
 
     config = json.load(open(config))
@@ -96,7 +108,7 @@ def app(path, config='config.json'):
     text_color = visual['text_color']
     use_box = config['box'] if 'box' in config else False
     use_mask = config['mask'] if 'mask' in config else False
-
+    area = config['area'] if 'area' in config else False
     lines = [
         LineZone(
             start=Point(i[0][0], i[0][1]),
@@ -164,7 +176,7 @@ def app(path, config='config.json'):
             )
         return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
 
-    if type(path) == int:
+    if type(source) == int:
         cap = cv2.VideoCapture(0)
         codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
         cap.set(6, codec)
@@ -184,6 +196,7 @@ def app(path, config='config.json'):
                 box,
                 mask,
                 mask_opacity,
+                area,
             )
             cv2.imshow('', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -192,7 +205,7 @@ def app(path, config='config.json'):
         cv2.destroyAllWindows()
     else:
         for res in model(
-            path,
+            source,
             stream=True,
             track=track,
         ):
@@ -206,6 +219,7 @@ def app(path, config='config.json'):
                 box,
                 mask,
                 mask_opacity,
+                area,
             )
             cv2.imshow('', f)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -216,9 +230,9 @@ def app(path, config='config.json'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', type=str)
+    parser.add_argument('--source', type=str)
     parser.add_argument('--config', type=str, default='config.json')
     args = parser.parse_args()
-    path = args.path
+    source = args.source
     config = args.config
-    app(path, config)
+    app(source, config)

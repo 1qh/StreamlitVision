@@ -29,6 +29,7 @@ from supervision import (
     PolygonZone,
     PolygonZoneAnnotator,
     VideoInfo,
+    draw_text,
     get_polygon_center,
 )
 from ultralytics import YOLO
@@ -244,7 +245,7 @@ def draw_tool(config, task, width, height, bg):
         )
         for i, z in enumerate(zones)
     ]
-    box, mask, mask_opacity = None, None, None
+    box, mask, mask_opacity, area = None, None, None, None
     col1, col2 = sb.columns(2)
     with col1:
         use_box = st.checkbox('Box', value=True)
@@ -261,6 +262,8 @@ def draw_tool(config, task, width, height, bg):
             use_mask = st.checkbox('Mask', value=True)
             if use_mask:
                 mask = MaskAnnotator()
+                area = sb.checkbox('Mask area', value=True)
+                config['area'] = area
                 mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
                 config['mask_opacity'] = mask_opacity
             config['mask'] = use_mask
@@ -274,6 +277,7 @@ def draw_tool(config, task, width, height, bg):
         box,
         mask,
         mask_opacity,
+        area,
     )
 
 
@@ -287,6 +291,7 @@ def annot(
     box,
     mask,
     mask_opacity,
+    area,
 ):
     det = Detections.from_yolov8(res)
     if res.boxes.id is not None:
@@ -310,6 +315,16 @@ def annot(
             detections=det,
             opacity=mask_opacity,
         )
+    if mask and area:
+        for t, a in zip(det.area, det.xyxy.astype(int)):
+            draw_text(
+                scene=f,
+                text=f'{int(t)}',
+                text_anchor=Point(x=(a[0] + a[2]) // 2, y=(a[1] + a[3]) // 2),
+                text_color=line_annotator.text_color,
+                text_scale=line_annotator.text_scale,
+                text_padding=line_annotator.text_padding,
+            )
     for l in lines:
         l.trigger(detections=det)
         line_annotator.annotate(frame=f, line_counter=l)
@@ -320,7 +335,7 @@ def annot(
     return cvt(f)
 
 
-def native_run(config, path):
+def native_run(config, source):
     col1, col2 = sb.columns(2)
     with col1:
         if st.button('Save config'):
@@ -328,7 +343,7 @@ def native_run(config, path):
                 json.dump(config, f)
     with col2:
         if st.button('Native Run'):
-            os.system(f'./native.py --path {path}')
+            os.system(f'./native.py --source {source}')
 
 
 def update_annot(f, height, lines, zones, _zone_ann):
@@ -381,14 +396,6 @@ def app(state):
             )
         return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
 
-    def cam(frame):
-        f = plot(model(frame.to_ndarray(format='bgr24'))[0])
-        return VideoFrame.from_ndarray(f)
-
-    def cam_track(frame):
-        f = plot(model(frame.to_ndarray(format='bgr24'), track=True)[0])
-        return VideoFrame.from_ndarray(f)
-
     file = sb.file_uploader(' ')
     use_cam = sb.checkbox('Use Camera', value=True if not file else False)
 
@@ -400,39 +407,35 @@ def app(state):
         )
         width, height = [int(i) for i in reso.decode().split('x')]
 
-        picture = None
-        if sb.checkbox('Annotate from selfie'):
-            picture = st.camera_input('Shoot')
+        def cam_stream(key, callback):
+            webrtc_streamer(
+                key=key,
+                video_frame_callback=callback,
+                media_stream_constraints={
+                    'video': {
+                        'width': {'min': width},
+                        'height': {'min': height},
+                    }
+                },
+            )
 
         track = True
         if task != 'classify':
-            track = sb.checkbox('Track')
+            track = sb.checkbox('Track', value=True)
         else:
             track = False
         config['track'] = track
 
-        if track:
-            webrtc_streamer(
-                key='a',
-                video_frame_callback=cam_track,
-                media_stream_constraints={
-                    'video': {
-                        'width': {'min': width},
-                        'height': {'min': height},
-                    }
-                },
-            )
-        else:
-            webrtc_streamer(
-                key='b',
-                video_frame_callback=cam,
-                media_stream_constraints={
-                    'video': {
-                        'width': {'min': width},
-                        'height': {'min': height},
-                    }
-                },
-            )
+        def cam(frame):
+            f = plot(model(frame.to_ndarray(format='bgr24'), track=track)[0])
+            return VideoFrame.from_ndarray(f)
+
+        cam_stream('a', cam)
+
+        picture = None
+        if sb.checkbox('Annotate from selfie'):
+            picture = st.camera_input('Shoot')
+
         if picture:
             one_img(picture, model)
             bg = Image.open(picture).resize((width, height))
@@ -445,6 +448,7 @@ def app(state):
                 box,
                 mask,
                 mask_opacity,
+                area,
             ) = draw_tool(
                 config,
                 task,
@@ -474,6 +478,7 @@ def app(state):
                         box,
                         mask,
                         mask_opacity,
+                        area,
                     )
                     st.image(frame)
             cap.release()
@@ -489,7 +494,7 @@ def app(state):
                     )
                 f = annot(
                     allclasses,
-                    model(f)[0],
+                    model(f, track=track)[0],
                     _lines,
                     line_annotator,
                     _zones,
@@ -497,52 +502,11 @@ def app(state):
                     box,
                     mask,
                     mask_opacity,
+                    area,
                 )
                 return VideoFrame.from_ndarray(f)
 
-            def cam_track_annot(frame):
-                f = frame.to_ndarray(format='bgr24')
-                global _shape, _lines, _zones, _zone_ann
-                _zone_ann = zone_annotators
-                if f.shape != _shape:
-                    _lines, _zones, _zone_ann, _shape = update_annot(
-                        f, height, lines, zones, _zone_ann
-                    )
-                f = annot(
-                    allclasses,
-                    model(frame.to_ndarray(format='bgr24'), track=True)[0],
-                    _lines,
-                    line_annotator,
-                    _zones,
-                    _zone_ann,
-                    box,
-                    mask,
-                    mask_opacity,
-                )
-                return VideoFrame.from_ndarray(f)
-
-            if track:
-                webrtc_streamer(
-                    key='c',
-                    video_frame_callback=cam_track_annot,
-                    media_stream_constraints={
-                        'video': {
-                            'width': {'min': width},
-                            'height': {'min': height},
-                        }
-                    },
-                )
-            else:
-                webrtc_streamer(
-                    key='d',
-                    video_frame_callback=cam_annot,
-                    media_stream_constraints={
-                        'video': {
-                            'width': {'min': width},
-                            'height': {'min': height},
-                        }
-                    },
-                )
+            cam_stream('b', cam_annot)
 
     if file:
         if 'image' in file.type:
@@ -565,6 +529,7 @@ def app(state):
                     box,
                     mask,
                     mask_opacity,
+                    area,
                 ) = draw_tool(
                     config,
                     task,
@@ -596,6 +561,7 @@ def app(state):
                                 box,
                                 mask,
                                 mask_opacity,
+                                area,
                             )
                             if task != 'classify'
                             else yolo_out

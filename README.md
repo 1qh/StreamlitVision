@@ -1,3 +1,5 @@
+# Computer Vision Web UI
+
 If you're running on CPU, make sure you run this first:
 
 ```
