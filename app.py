@@ -376,7 +376,7 @@ def update_annot(f, height, lines, zones, _zone_ann):
     return _lines, _zones, _zone_ann, _shape
 
 
-def app(state):
+def webui(state):
     st_config()
     config = {}
     config, m, conf, classes = custom_params(config)
@@ -575,18 +575,18 @@ def app(state):
             sb.warning('Please upload image/video')
 
 
-class YoloFlow(LightningFlow):
+class App(LightningFlow):
     def configure_layout(self):
-        return StreamlitFrontend(render_fn=app)
+        return StreamlitFrontend(render_fn=webui)
 
     def run(self):
         pass
 
 
-lit = LightningApp(YoloFlow())
+lit = LightningApp(App())
 
 running_apps = [i for i in [p.cmdline() for p in process_iter()] if 'run' in i]
 this_process = next(p for p in running_apps if any(Path(__file__).stem in a for a in p))
 
 if 'app' not in this_process:
-    app('')
+    webui('')
