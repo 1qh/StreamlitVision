@@ -72,10 +72,11 @@ pip install lap
 
 <details><summary>Note</summary>
 
-### Limitations
+### TODO
 
-- Everything tested on Linux. Some might not be compatible with Windows/Mac.
-
-- Currently only YOLOv8 models are supported.
+- [x] Support all YOLOv8 models (Detect, Segment, Pose, Classify)
+  - [x] Support tracking
+- [ ] Support YOLO-NAS object detections
+- [ ] Support RT-DETR object detections
 
 </details>
