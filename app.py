@@ -13,7 +13,7 @@ from lightning import LightningApp, LightningFlow
 from lightning.app.frontend import StreamlitFrontend
 from PIL import Image
 from psutil import process_iter
-from streamlit import set_page_config
+from streamlit import session_state, set_page_config
 from streamlit import sidebar as sb
 from streamlit_drawable_canvas import st_canvas
 from streamlit_webrtc import webrtc_streamer
@@ -34,8 +34,13 @@ from supervision import (
 )
 from ultralytics import YOLO
 
+from color import colors, colors_rgb
+
 _shape = None
 _lines, _zones, _zone_ann = [], [], []
+
+if 'path' not in session_state:
+    session_state['path'] = ''
 
 
 def st_config():
@@ -59,7 +64,9 @@ def custom_classes(model):
     all = list(d.values())
 
     if sb.checkbox('Custom Classes'):
-        return [all.index(i) for i in sb.multiselect(' ', all)]
+        return [
+            all.index(i) for i in sb.multiselect(' ', all, label_visibility='collapsed')
+        ]
     else:
         return list(d.keys())
 
@@ -108,8 +115,8 @@ def one_img(file, model):
     st.image(plot(model(Image.open(file))[0]))
 
 
-def trim_vid(file, path, begin, end):
-    trim = f'trim_{file.name}'
+def trim_vid(path, begin, end):
+    trim = f'trim_{path[3:]}'
     os.system(f'ffmpeg -y -i {path} -ss {begin} -to {end} -c copy {trim}')
     return trim
 
@@ -121,14 +128,9 @@ def first_frame(path):
     return frame
 
 
-def prepare(file):
-    sb.video(file)
-    path = f'up_{file.name}'
-    with open(path, 'wb') as up:
-        up.write(file.read())
+def prepare(path):
     vid = VideoInfo.from_video_path(path)
 
-    trimmed, begin, end = False, None, None
     if which('ffmpeg'):
         trimmed = sb.checkbox('Trim')
         if trimmed:
@@ -139,8 +141,13 @@ def prepare(file):
                 max_value=length,
             )
             begin, end = hms(begin), hms(end)
-            sb.write(f'Trim from {begin} to {end}')
-    return vid, path, trimmed, begin, end
+            if sb.button(f'Trim from {begin[3:]} to {end[3:]}'):
+                path = trim_vid(path, begin, end)
+                session_state['path'] = path
+        else:
+            session_state['path'] = path
+    else:
+        session_state['path'] = path
 
 
 def get_lines_polygons(d):
@@ -267,7 +274,8 @@ def draw_tool(config, task, width, height, bg):
                 mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
                 config['mask_opacity'] = mask_opacity
             config['mask'] = use_mask
-
+    predict_color = sb.checkbox('Predict color', value=False)
+    config['predict_color'] = predict_color
     return (
         config,
         lines,
@@ -278,7 +286,21 @@ def draw_tool(config, task, width, height, bg):
         mask,
         mask_opacity,
         area,
+        predict_color,
     )
+
+
+def rgb2ycc(rgb):
+    rgb = rgb / 255.0
+    r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cb = 128 - 0.168736 * r - 0.331364 * g + 0.5 * b
+    cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+    return np.stack([y, cb, cr], axis=-1)
+
+
+def closest(rgb, ycc_colors):
+    return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
 
 
 def annot(
@@ -292,6 +314,7 @@ def annot(
     mask,
     mask_opacity,
     area,
+    predict_color,
 ):
     det = Detections.from_yolov8(res)
     if res.boxes.id is not None:
@@ -299,6 +322,32 @@ def annot(
     if res.masks is not None:
         det.mask = res.masks.data.cpu().numpy()
     f = res.orig_img
+
+    if predict_color:
+        ycc_colors = rgb2ycc(colors_rgb)
+        n = det.xyxy.shape[0]
+        centers_color = np.zeros((n, 3), dtype=np.uint8)
+
+        centers_x = np.mean(det.xyxy[:, [0, 2]], axis=1).astype(int)
+        centers_y = np.mean(det.xyxy[:, [1, 3]], axis=1).astype(int)
+
+        centers_color = f[centers_y, centers_x]
+
+        for i in range(n):
+            rgb = centers_color[i]
+            predict = closest(rgb, ycc_colors)
+            color = colors_rgb[predict][::-1]
+            color = tuple(map(int, color))
+            color_name = colors[predict]
+            cv2.putText(
+                f,
+                color_name,
+                (centers_x[i], centers_y[i]),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                color,
+                2,
+            )
 
     if box:
         f = box.annotate(
@@ -335,15 +384,26 @@ def annot(
     return cvt(f)
 
 
-def native_run(config, source):
-    col1, col2 = sb.columns(2)
-    with col1:
-        if st.button('Save config'):
-            with open('config.json', 'w') as f:
-                json.dump(config, f)
-    with col2:
-        if st.button('Native Run'):
-            os.system(f'./native.py --source {source}')
+def save_config(config):
+    if sb.button('Save config'):
+        with open('config.json', 'w') as f:
+            json.dump(config, f)
+
+
+def native_run(source):
+    here = Path(__file__).parent
+    option = sb.radio(f'Native run on {source}', ('Show', 'Save to video'))
+    if option == 'Show':
+        if sb.button('Show with OpenCV'):
+            cmd = f'{here}/native.py --source {source}'
+            st.code(cmd, language='bash')
+            os.system(cmd)
+    elif option == 'Save to video':
+        saveto = sb.text_input(' ', 'result.mp4', label_visibility='collapsed')
+        if sb.button('Save with OpenCV'):
+            cmd = f'{here}/native.py --source {source} --saveto {saveto}'
+            st.code(cmd, language='bash')
+            os.system(cmd)
 
 
 def update_annot(f, height, lines, zones, _zone_ann):
@@ -388,15 +448,20 @@ def webui(state):
         classes=classes,
         conf=conf,
         stream=False,
-        track=False,
+        tracker=None,
     ):
-        if track:
+        if tracker is not None:
             return m.track(
-                source, classes=classes, conf=conf, retina_masks=True, stream=stream
+                source,
+                classes=classes,
+                conf=conf,
+                retina_masks=True,
+                stream=stream,
+                tracker=f'{tracker}.yaml',
             )
         return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
 
-    file = sb.file_uploader(' ')
+    file = sb.file_uploader(' ', label_visibility='collapsed')
     use_cam = sb.checkbox('Use Camera', value=True if not file else False)
 
     if use_cam:
@@ -419,15 +484,15 @@ def webui(state):
                 },
             )
 
-        track = True
+        tracker = None
         if task != 'classify':
-            track = sb.checkbox('Track', value=True)
+            tracker = sb.selectbox('Tracker', [None, 'bytetrack', 'botsort'])
         else:
-            track = False
-        config['track'] = track
+            tracker = False
+        config['tracker'] = tracker
 
         def cam(frame):
-            f = plot(model(frame.to_ndarray(format='bgr24'), track=track)[0])
+            f = plot(model(frame.to_ndarray(format='bgr24'), tracker=tracker)[0])
             return VideoFrame.from_ndarray(f)
 
         cam_stream('a', cam)
@@ -449,6 +514,7 @@ def webui(state):
                 mask,
                 mask_opacity,
                 area,
+                predict_color,
             ) = draw_tool(
                 config,
                 task,
@@ -456,7 +522,8 @@ def webui(state):
                 height,
                 bg,
             )
-            native_run(config, 0)
+            save_config(config)
+            native_run(0)
             cam_open = sb.checkbox('Run')
             cap = cv2.VideoCapture(0)
             codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
@@ -467,7 +534,7 @@ def webui(state):
             with st.empty():
                 while cam_open:
                     _, f = cap.read()
-                    res = model(f, track=track)[0]
+                    res = model(f, tracker=tracker)[0]
                     frame = annot(
                         allclasses,
                         res,
@@ -479,6 +546,7 @@ def webui(state):
                         mask,
                         mask_opacity,
                         area,
+                        predict_color,
                     )
                     st.image(frame)
             cap.release()
@@ -494,7 +562,7 @@ def webui(state):
                     )
                 f = annot(
                     allclasses,
-                    model(f, track=track)[0],
+                    model(f, tracker=tracker)[0],
                     _lines,
                     line_annotator,
                     _zones,
@@ -503,6 +571,7 @@ def webui(state):
                     mask,
                     mask_opacity,
                     area,
+                    predict_color,
                 )
                 return VideoFrame.from_ndarray(f)
 
@@ -514,12 +583,28 @@ def webui(state):
             one_img(file, model)
 
         elif 'video' in file.type:
-            vid, path, trimmed, begin, end = prepare(file)
-            width, height = vid.resolution_wh
+            sb.video(file)
+            path = f'up_{file.name}'
+            with open(path, 'wb') as up:
+                up.write(file.read())
 
-            track = True
+            prepare(path)
+            path = session_state['path']
+            vid = VideoInfo.from_video_path(path)
+
+            width, height = vid.resolution_wh
+            sb.markdown(
+                f'''
+                - Video resolution: {width}x{height}
+                - Total frames: {vid.total_frames}
+                - FPS: {vid.fps}
+                - Path: {path}
+                '''
+            )
+
+            tracker = None
             if task != 'classify':
-                track = sb.checkbox('Track', value=True)
+                tracker = sb.selectbox('Tracker', [None, 'bytetrack', 'botsort'])
                 (
                     config,
                     lines,
@@ -530,6 +615,7 @@ def webui(state):
                     mask,
                     mask_opacity,
                     area,
+                    predict_color,
                 ) = draw_tool(
                     config,
                     task,
@@ -538,17 +624,14 @@ def webui(state):
                     first_frame(path),
                 )
             else:
-                track = False
-            config['track'] = track
+                tracker = None
+            config['tracker'] = tracker
 
             sv_out = None
-            native_run(config, path)
-            while sb.checkbox('Run', key='r'):
-                if trimmed:
-                    path = trim_vid(file, path, begin, end)
-
-                with st.empty():
-                    for res in model(path, stream=True, track=track):
+            run = sb.checkbox('Run & show on web', key='r')
+            with st.empty():
+                while run:
+                    for res in model(path, stream=True, tracker=tracker):
                         yolo_out = plot(res)
                         sv_out = (
                             annot(
@@ -562,6 +645,7 @@ def webui(state):
                                 mask,
                                 mask_opacity,
                                 area,
+                                predict_color,
                             )
                             if task != 'classify'
                             else yolo_out
@@ -571,6 +655,8 @@ def webui(state):
                             st.image(sv_out)
                         with tab2:
                             st.image(yolo_out)
+            save_config(config)
+            native_run(path)
         else:
             sb.warning('Please upload image/video')
 
