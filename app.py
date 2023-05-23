@@ -34,6 +34,7 @@ from supervision import (
 )
 from ultralytics import YOLO
 
+from color import colors, colors_rgb
 from native import annot
 
 _shape = None
@@ -113,6 +114,11 @@ def plot(i):
 
 def one_img(file, model):
     st.image(plot(model(Image.open(file))[0]))
+
+
+def rgb2hex(rgb):
+    r, g, b = rgb
+    return f'#{r:02x}{g:02x}{b:02x}'
 
 
 def trim_vid(path, begin, end):
@@ -275,6 +281,9 @@ def draw_tool(config, task, width, height, bg):
                 config['mask_opacity'] = mask_opacity
             config['mask'] = use_mask
     predict_color = sb.checkbox('Predict color', value=False)
+    if predict_color:
+        for color, rgb in zip(colors, colors_rgb):
+            sb.color_picker(f'{color}', value=rgb2hex(rgb))
     config['predict_color'] = predict_color
     return (
         config,
