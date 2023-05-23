@@ -34,7 +34,7 @@ from supervision import (
 )
 from ultralytics import YOLO
 
-from color import colors, colors_rgb
+from native import annot
 
 _shape = None
 _lines, _zones, _zone_ann = [], [], []
@@ -290,100 +290,6 @@ def draw_tool(config, task, width, height, bg):
     )
 
 
-def rgb2ycc(rgb):
-    rgb = rgb / 255.0
-    r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
-    y = 0.299 * r + 0.587 * g + 0.114 * b
-    cb = 128 - 0.168736 * r - 0.331364 * g + 0.5 * b
-    cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
-    return np.stack([y, cb, cr], axis=-1)
-
-
-def closest(rgb, ycc_colors):
-    return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
-
-
-def annot(
-    allclasses,
-    res,
-    lines,
-    line_annotator,
-    zones,
-    zone_annotators,
-    box,
-    mask,
-    mask_opacity,
-    area,
-    predict_color,
-):
-    det = Detections.from_yolov8(res)
-    if res.boxes.id is not None:
-        det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
-    if res.masks is not None:
-        det.mask = res.masks.data.cpu().numpy()
-    f = res.orig_img
-
-    if predict_color:
-        ycc_colors = rgb2ycc(colors_rgb)
-        n = det.xyxy.shape[0]
-        centers_color = np.zeros((n, 3), dtype=np.uint8)
-
-        centers_x = np.mean(det.xyxy[:, [0, 2]], axis=1).astype(int)
-        centers_y = np.mean(det.xyxy[:, [1, 3]], axis=1).astype(int)
-
-        centers_color = f[centers_y, centers_x]
-
-        for i in range(n):
-            rgb = centers_color[i]
-            predict = closest(rgb, ycc_colors)
-            color = colors_rgb[predict][::-1]
-            color = tuple(map(int, color))
-            color_name = colors[predict]
-            cv2.putText(
-                f,
-                color_name,
-                (centers_x[i], centers_y[i]),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                color,
-                2,
-            )
-
-    if box:
-        f = box.annotate(
-            scene=f,
-            detections=det,
-            labels=[
-                f'{conf:0.2f} {allclasses[cls]}' + (f' {track_id}' if track_id else '')
-                for _, _, conf, cls, track_id in det
-            ],
-        )
-    if mask:
-        f = mask.annotate(
-            scene=f,
-            detections=det,
-            opacity=mask_opacity,
-        )
-    if mask and area:
-        for t, a in zip(det.area, det.xyxy.astype(int)):
-            draw_text(
-                scene=f,
-                text=f'{int(t)}',
-                text_anchor=Point(x=(a[0] + a[2]) // 2, y=(a[1] + a[3]) // 2),
-                text_color=line_annotator.text_color,
-                text_scale=line_annotator.text_scale,
-                text_padding=line_annotator.text_padding,
-            )
-    for l in lines:
-        l.trigger(detections=det)
-        line_annotator.annotate(frame=f, line_counter=l)
-
-    for z, zone in zip(zones, zone_annotators):
-        z.trigger(detections=det)
-        f = zone.annotate(scene=f)
-    return cvt(f)
-
-
 def save_config(config):
     if sb.button('Save config'):
         with open('config.json', 'w') as f:
@@ -492,8 +398,9 @@ def webui(state):
         config['tracker'] = tracker
 
         def cam(frame):
-            f = plot(model(frame.to_ndarray(format='bgr24'), tracker=tracker)[0])
-            return VideoFrame.from_ndarray(f)
+            return VideoFrame.from_ndarray(
+                model(frame.to_ndarray(), tracker=tracker)[0].plot()
+            )
 
         cam_stream('a', cam)
 
@@ -548,12 +455,12 @@ def webui(state):
                         area,
                         predict_color,
                     )
-                    st.image(frame)
+                    st.image(cvt(frame))
             cap.release()
 
             # oh my god, it took me so long to realize the frame bigger through time
             def cam_annot(frame):
-                f = frame.to_ndarray(format='bgr24')
+                f = frame.to_ndarray()
                 global _shape, _lines, _zones, _zone_ann
                 _zone_ann = zone_annotators
                 if f.shape != _shape:
@@ -652,7 +559,7 @@ def webui(state):
                         )
                         tab1, tab2 = st.tabs(['Supervision', 'YOLO'])
                         with tab1:
-                            st.image(sv_out)
+                            st.image(cvt(sv_out))
                         with tab2:
                             st.image(yolo_out)
             save_config(config)

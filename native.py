@@ -26,10 +26,6 @@ from ultralytics import YOLO
 from color import colors, colors_rgb
 
 
-def cvt(f):
-    return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-
-
 def rgb2ycc(rgb):
     rgb = rgb / 255.0
     r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
@@ -41,6 +37,9 @@ def rgb2ycc(rgb):
 
 def closest(rgb, ycc_colors):
     return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
+
+
+ycc_colors = rgb2ycc(colors_rgb)
 
 
 def annot(
@@ -64,7 +63,6 @@ def annot(
     f = res.orig_img
 
     if predict_color:
-        ycc_colors = rgb2ycc(colors_rgb)
         n = det.xyxy.shape[0]
         centers_color = np.zeros((n, 3), dtype=np.uint8)
 
