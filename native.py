@@ -63,27 +63,19 @@ def annot(
     f = res.orig_img
 
     if predict_color:
-        n = det.xyxy.shape[0]
-        centers_color = np.zeros((n, 3), dtype=np.uint8)
+        centers = (det.xyxy[:, [0, 1]] + det.xyxy[:, [2, 3]]).astype(int) // 2
 
-        centers_x = np.mean(det.xyxy[:, [0, 2]], axis=1).astype(int)
-        centers_y = np.mean(det.xyxy[:, [1, 3]], axis=1).astype(int)
-
-        centers_color = f[centers_y, centers_x]
-
-        for i in range(n):
-            rgb = centers_color[i]
-            predict = closest(rgb, ycc_colors)
-            color = colors_rgb[predict][::-1]
-            color = tuple(map(int, color))
-            color_name = colors[predict]
+        for i in range(det.xyxy.shape[0]):
+            x = centers[i][0]
+            y = centers[i][1]
+            predict = closest(f[y, x], ycc_colors)
             cv2.putText(
                 f,
-                color_name,
-                (centers_x[i], centers_y[i]),
+                colors[predict],
+                (x, y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,
-                color,
+                tuple(map(int, colors_rgb[predict][::-1])),
                 2,
             )
 

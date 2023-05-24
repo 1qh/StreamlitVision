@@ -11,7 +11,8 @@ colors_rgb = np.array(
         [0, 0, 0],
         [255, 255, 255],
     ]
-)
+).astype(np.uint8)
+
 colors = [
     'red',
     'orange',

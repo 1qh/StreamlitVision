@@ -41,6 +41,7 @@ pip install lap
     - Turn tracking on/off
     - Adjust confidence threshold
     - Filter by class
+    - Object color classification
     - Trim video
 
 - Draw visual elements interactively
