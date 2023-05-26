@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import time
 from subprocess import check_output
 
 import cv2
 import numpy as np
+import yolov5
 from supervision import (
     BoxAnnotator,
     Color,
@@ -39,12 +41,32 @@ def closest(rgb, ycc_colors):
     return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
 
 
+def cvt(f):
+    return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+
+
 ycc_colors = rgb2ycc(colors_rgb)
+colors_rgb = [tuple(map(int, i)) for i in colors_rgb]
+
+
+def get_det(f, model, legacy=False, tracker=None):
+    if legacy:
+        return Detections.from_yolov5(model(f)), cvt(f)
+    res = model(f, tracker=tracker)[0]
+    det = Detections.from_yolov8(res)
+    if res.boxes.id is not None:
+        det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
+    if res.masks is not None:
+        det.mask = res.masks.data.cpu().numpy()
+    return det, cvt(res.plot())
 
 
 def annot(
+    f,
+    model,
+    tracker,
+    legacy,
     allclasses,
-    res,
     lines,
     line_annotator,
     zones,
@@ -54,31 +76,36 @@ def annot(
     mask_opacity,
     area,
     predict_color,
+    show_fps,
 ):
-    det = Detections.from_yolov8(res)
-    if res.boxes.id is not None:
-        det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
-    if res.masks is not None:
-        det.mask = res.masks.data.cpu().numpy()
-    f = res.orig_img
+    begin = time.time()
+    det, res = (
+        get_det(f, model, legacy) if legacy else get_det(f, model, tracker=tracker)
+    )
+
+    xyxy = det.xyxy
+
+    text_color = line_annotator.text_color
+    text_scale = line_annotator.text_scale
+    text_padding = line_annotator.text_padding
 
     if predict_color:
-        centers = (det.xyxy[:, [0, 1]] + det.xyxy[:, [2, 3]]).astype(int) // 2
+        centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]).astype(int) // 2
 
-        for i in range(det.xyxy.shape[0]):
+        for i in range(xyxy.shape[0]):
             x = centers[i][0]
             y = centers[i][1]
             predict = closest(f[y, x], ycc_colors)
-            cv2.putText(
-                f,
-                colors[predict],
-                (x, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                tuple(map(int, colors_rgb[predict][::-1])),
-                2,
+            r, g, b = colors_rgb[predict]
+            draw_text(
+                scene=f,
+                text=colors[predict],
+                text_anchor=Point(x=x, y=y + 20),
+                text_color=Color(255 - r, 255 - g, 255 - b),
+                text_scale=text_scale,
+                text_padding=text_padding,
+                background_color=Color(r, g, b),
             )
-
     if box:
         f = box.annotate(
             scene=f,
@@ -89,20 +116,16 @@ def annot(
             ],
         )
     if mask:
-        f = mask.annotate(
-            scene=f,
-            detections=det,
-            opacity=mask_opacity,
-        )
+        f = mask.annotate(scene=f, detections=det, opacity=mask_opacity)
     if mask and area:
-        for t, a in zip(det.area, det.xyxy.astype(int)):
+        for t, a in zip(det.area, xyxy.astype(int)):
             draw_text(
                 scene=f,
                 text=f'{int(t)}',
                 text_anchor=Point(x=(a[0] + a[2]) // 2, y=(a[1] + a[3]) // 2),
-                text_color=line_annotator.text_color,
-                text_scale=line_annotator.text_scale,
-                text_padding=line_annotator.text_padding,
+                text_color=text_color,
+                text_scale=text_scale,
+                text_padding=text_padding,
             )
     for l in lines:
         l.trigger(detections=det)
@@ -111,7 +134,18 @@ def annot(
     for z, zone in zip(zones, zone_annotators):
         z.trigger(detections=det)
         f = zone.annotate(scene=f)
-    return f
+
+    fps = 1 / (time.time() - begin)
+    if show_fps:
+        draw_text(
+            scene=f,
+            text=f'{fps:.1f}',
+            text_anchor=Point(x=50, y=20),
+            text_color=text_color,
+            text_scale=text_scale * 2,
+            text_padding=text_padding,
+        )
+    return f, res
 
 
 def maxcam():
@@ -135,40 +169,19 @@ def save(source, target, callback):
                 sink.write_frame(callback(frame))
 
 
-def app(source, config='config.json', saveto=None):
-    cams = [i for i in range(-1, 2, 1)]
-    if '.' not in source and int(source) in cams:
-        source = int(source)
-        width, height = maxcam()
-    else:
-        vid = VideoInfo.from_video_path(source)
-        width, height = vid.resolution_wh
-
-    config = json.load(open(config))
-    classes = config['classes']
-    conf = config['conf']
-    tracker = config['tracker']
-    ckpt = config['model']
-    visual = config['visual']
-    lines = config['lines']
-    polygons = config['polygons']
-    thickness = visual['thickness']
-    text_scale = visual['text_scale']
-    text_offset = visual['text_offset']
-    text_padding = visual['text_padding']
-    text_color = visual['text_color']
+def init_annotator(config, reso, polygons):
     use_box = config['box'] if 'box' in config else False
     use_mask = config['mask'] if 'mask' in config else False
     area = config['area'] if 'area' in config else False
     predict_color = config['predict_color'] if 'predict_color' in config else False
-    lines = [
-        LineZone(
-            start=Point(i[0][0], i[0][1]),
-            end=Point(i[1][0], i[1][1]),
-        )
-        for i in lines
-    ]
-    polygons = [np.array(i) for i in polygons]
+    show_fps = config['show_fps'] if 'show_fps' in config else False
+    visual = config['visual'] if 'visual' in config else {}
+    if visual != {}:
+        thickness = visual['thickness']
+        text_scale = visual['text_scale']
+        text_offset = visual['text_offset']
+        text_padding = visual['text_padding']
+        text_color = visual['text_color']
 
     text_color = Color.from_hex(text_color)
     color = ColorPalette.default()
@@ -183,7 +196,7 @@ def app(source, config='config.json', saveto=None):
     zones = [
         PolygonZone(
             polygon=p,
-            frame_resolution_wh=(width, height),
+            frame_resolution_wh=reso,
         )
         for p in polygons
     ]
@@ -207,36 +220,91 @@ def app(source, config='config.json', saveto=None):
             text_scale=text_scale,
             text_padding=text_padding,
         )
-
     if use_mask:
         mask = MaskAnnotator()
         mask_opacity = config['mask_opacity'] if 'mask_opacity' in config else 0.5
 
-    m = YOLO(ckpt)
-    allclasses = m.model.names
+    return (
+        line_annotator,
+        zones,
+        zone_annotators,
+        box,
+        mask,
+        mask_opacity,
+        area,
+        predict_color,
+        show_fps,
+    )
 
-    def model(
-        source,
-        classes=classes,
-        conf=conf,
-        stream=False,
-        tracker=None,
-    ):
-        if tracker is not None:
-            return m.track(
+
+def app(source, config='config.json', saveto=None):
+    if '.' not in source and int(source) in [i for i in range(-1, 2, 1)]:
+        source = int(source)
+        reso = maxcam()
+        fps = 30
+    else:
+        vid = VideoInfo.from_video_path(source)
+        reso = vid.resolution_wh
+        fps = vid.fps
+
+    config = json.load(open(config))
+
+    classes = config['classes']
+    conf = config['conf']
+    tracker = config['tracker']
+    ver = config['ver']
+    ckpt = config['model']
+
+    lines = config['lines']
+    lines = [
+        LineZone(
+            start=Point(i[0][0], i[0][1]),
+            end=Point(i[1][0], i[1][1]),
+        )
+        for i in lines
+    ]
+    polygons = config['polygons']
+    polygons = [np.array(i) for i in polygons]
+    (
+        line_annotator,
+        zones,
+        zone_annotators,
+        box,
+        mask,
+        mask_opacity,
+        area,
+        predict_color,
+        show_fps,
+    ) = init_annotator(config, reso, polygons)
+
+    legacy = ver == 'v5'
+    m = YOLO(ckpt) if not legacy else yolov5.load(ckpt)
+    allclasses = m.names
+
+    if legacy:
+        m.classes = classes
+        m.conf = conf
+
+    def model(source, classes=classes, conf=conf, tracker=None):
+        return (
+            m(source, classes=classes, conf=conf, retina_masks=True)
+            if tracker is None
+            else m.track(
                 source,
                 classes=classes,
                 conf=conf,
                 retina_masks=True,
-                stream=stream,
                 tracker=f'{tracker}.yaml',
             )
-        return m(source, classes=classes, conf=conf, retina_masks=True, stream=stream)
+        )
 
-    def callback(f):
+    def infer(f):
         return annot(
+            f,
+            m if legacy else model,
+            tracker,
+            legacy,
             allclasses,
-            model(f, tracker=tracker)[0],
             lines,
             line_annotator,
             zones,
@@ -246,57 +314,29 @@ def app(source, config='config.json', saveto=None):
             mask_opacity,
             area,
             predict_color,
-        )
+            show_fps,
+        )[0]
 
-    if type(source) == int:
-        cap = cv2.VideoCapture(0)
-        codec = cv2.VideoWriter_fourcc(*'MJPG')
-        cap.set(6, codec)
-        cap.set(5, 30)
-        cap.set(3, width)
-        cap.set(4, height)
-        if saveto is None:
-            while True:
-                cv2.imshow('', callback(cap.read()[1]))
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        else:
-            writer = cv2.VideoWriter(saveto, codec, 30, (width, height))
-            while True:
-                writer.write(callback(cap.read()[1]))
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-            writer.release()
+    codec = cv2.VideoWriter_fourcc(*'MJPG')
+    cap = cv2.VideoCapture(source)
+    cap.set(6, codec)
+    cap.set(5, 30)
+    cap.set(3, reso[0])
+    cap.set(4, reso[1])
 
+    if saveto is None:
+        while True:
+            cv2.imshow('', infer(cap.read()[1]))
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
         cap.release()
-        cv2.destroyAllWindows()
     else:
-        if saveto is None:
-            for res in model(
-                source,
-                stream=True,
-                tracker=tracker,
-            ):
-                f = annot(
-                    allclasses,
-                    res,
-                    lines,
-                    line_annotator,
-                    zones,
-                    zone_annotators,
-                    box,
-                    mask,
-                    mask_opacity,
-                    area,
-                    predict_color,
-                )
-                cv2.imshow('', f)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-        else:
-            save(source, saveto, callback)
+        writer = cv2.VideoWriter(saveto, codec, fps, reso)
+        while True:
+            writer.write(infer(cap.read()[1]))
 
-        cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
