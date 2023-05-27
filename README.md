@@ -2,21 +2,20 @@
 
 ### Setup
 
+```
+pip install -r requirements.txt
+pip install lap
+```
+
 <details><summary>(For non-GPU users)</summary>
 
-
-Install CPU version of pytorch before other dependencies 
+- Install CPU version of pytorch before above 
 
 ```
 pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 ```
 
 </details>
-
-```
-pip install -r requirements.txt
-pip install lap
-```
 
 ### Run
 
