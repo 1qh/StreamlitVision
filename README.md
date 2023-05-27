@@ -2,9 +2,11 @@
 
 ### Setup
 
-<details><summary>CPU Only</summary>
-  
+<details><summary>(For non-GPU users)</summary>
+
+
 Install CPU version of pytorch before other dependencies 
+
 ```
 pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 ```
