@@ -23,7 +23,7 @@ from supervision import (
     draw_text,
     get_video_frames_generator,
 )
-from ultralytics import YOLO
+from ultralytics import RTDETR, YOLO
 
 from color import colors, colors_rgb
 
@@ -278,8 +278,12 @@ def app(source, config='config.json', saveto=None):
     ) = init_annotator(config, reso, polygons)
 
     legacy = ver == 'v5'
-    m = YOLO(ckpt) if not legacy else yolov5.load(ckpt)
-    allclasses = m.names
+    if ver == 'rtdetr':
+        m = RTDETR(ckpt)
+    else:
+        m = YOLO(ckpt) if not legacy else yolov5.load(ckpt)
+
+    allclasses = m.model.names
 
     if legacy:
         m.classes = classes
@@ -287,7 +291,7 @@ def app(source, config='config.json', saveto=None):
 
     def model(source, classes=classes, conf=conf, tracker=None):
         return (
-            m(source, classes=classes, conf=conf, retina_masks=True)
+            m.predict(source, classes=classes, conf=conf, retina_masks=True)
             if tracker is None
             else m.track(
                 source,
@@ -320,7 +324,7 @@ def app(source, config='config.json', saveto=None):
     codec = cv2.VideoWriter_fourcc(*'MJPG')
     cap = cv2.VideoCapture(source)
     cap.set(6, codec)
-    cap.set(5, 30)
+    cap.set(5, fps)
     cap.set(3, reso[0])
     cap.set(4, reso[1])
 
@@ -341,7 +345,7 @@ def app(source, config='config.json', saveto=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=str)
+    parser.add_argument('--source', type=str, default='0')
     parser.add_argument('--config', type=str, default='config.json')
     parser.add_argument('--saveto', type=str, default=None)
     args = parser.parse_args()

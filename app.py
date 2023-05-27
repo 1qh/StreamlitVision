@@ -28,7 +28,7 @@ from supervision import (
     VideoInfo,
     get_polygon_center,
 )
-from ultralytics import YOLO
+from ultralytics import RTDETR, YOLO
 
 from color import colors, colors_rgb
 from native import annot, cvt, init_annotator, maxcam
@@ -57,7 +57,7 @@ def st_config():
 
 
 def custom_classes(model):
-    d = model.names
+    d = model.model.names
     all = list(d.values())
 
     if sb.checkbox('Custom Classes'):
@@ -70,44 +70,50 @@ def custom_classes(model):
 
 def load():
     config = {}
-    suffix = {
-        'Detect': '',
-        'Segment': '-seg',
-        'Classify': '-cls',
-        'Pose': '-pose',
-    }
-    tasks = list(suffix.keys())
+    model_family = sb.radio('Model family', ('YOLO', 'RT-DETR'), horizontal=True)
 
-    ver = sb.selectbox('YOLO version', ('v8', 'v5u', 'v5'))
-    if ver == 'v5u':
-        tasks = tasks[:1]
-    elif ver == 'v5':
-        tasks = tasks[:3]
+    if model_family == 'YOLO':
+        suffix = {
+            'Detect': '',
+            'Segment': '-seg',
+            'Classify': '-cls',
+            'Pose': '-pose',
+        }
+        tasks = list(suffix.keys())
 
-    pretrained = sb.checkbox('Pretrained', value=True)
-    col1, col2 = sb.columns(2)
-    if pretrained:
-        with col1:
-            size = st.selectbox('Model size', ('n', 's', 'm', 'l', 'x'))
-        with col2:
-            task = st.selectbox('Task', tasks)
-        model_path = (
-            f"yolo{ver[:2]}{size}{suffix[task]}{ver[2] if len(ver) > 2 else ''}.pt"
-        )
-    else:
-        with col1:
-            model_path = st.selectbox('Custom model', glob('*.pt'))
-        with col2:
-            task = st.selectbox('Task', tasks)
+        ver = sb.selectbox('YOLO version', ('v8', 'v6', 'v5u', 'v5', 'v3'))
+        if ver in ('v3', 'v5u', 'v6'):
+            tasks = tasks[:1]
+        elif ver == 'v5':
+            tasks = tasks[:3]
 
-    if ver == 'v5':
-        model = yolov5.load(model_path)
-        task = task.lower()
+        pretrained = sb.checkbox('Pretrained', value=True)
+        c1, c2 = sb.columns(2)
+        task = c1.selectbox('Task', tasks)
+        if pretrained:
+            size = c2.selectbox(
+                'Model size', ('n', 's', 'm', 'l', 'x'), disabled=ver == 'v3'
+            )
+            model_path = f"yolo{ver[:2]}{size if ver != 'v3' else ''}{suffix[task]}{ver[2] if len(ver) > 2 else ''}.pt"
+        else:
+            model_path = c2.selectbox('Custom model', glob('*.pt'))
+
+        if ver == 'v5':
+            model = yolov5.load(model_path)
+            task = task.lower()
+            config['model'] = model_path
+        else:
+            model = YOLO(model_path)
+            task = model.overrides['task']
+            config['model'] = model.ckpt_path
+
+    elif model_family == 'RT-DETR':
+        ver = 'rtdetr'
+        task = 'detect'
+        size = sb.selectbox('Model size', ('l', 'x'))
+        model_path = f'{ver}-{size}.pt'
+        model = RTDETR(model_path)
         config['model'] = model_path
-    else:
-        model = YOLO(model_path)
-        task = model.overrides['task']
-        config['model'] = model.ckpt_path
 
     conf = sb.slider('Threshold', max_value=1.0, value=0.25)
     classes = custom_classes(model)
@@ -236,18 +242,16 @@ def draw_tool(config, task, reso, bg):
     text_padding = sb.slider('Text padding', 0, 10, 2)
     text_color = sb.color_picker('Text color', '#000000')
 
-    col1, col2 = sb.columns(2)
-    with col1:
-        use_box = st.checkbox('Box', value=True)
-    with col2:
-        if task == 'segment':
-            use_mask = st.checkbox('Mask', value=True)
-            if use_mask:
-                config['mask'] = use_mask
-                area = sb.checkbox('Mask area', value=True)
-                mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
-                config['area'] = area
-                config['mask_opacity'] = mask_opacity
+    c1, c2, c3 = sb.columns(3)
+    use_box = c1.checkbox('Box', value=True)
+    if task == 'segment':
+        use_mask = c2.checkbox('Mask', value=True)
+        if use_mask:
+            config['mask'] = use_mask
+            area = c3.checkbox('Area', value=True)
+            mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
+            config['area'] = area
+            config['mask_opacity'] = mask_opacity
 
     predict_color = sb.checkbox('Predict color', value=False)
     if predict_color:
@@ -350,7 +354,7 @@ def main(state):
     st_config()
 
     config, m = load()
-    allclasses = m.names
+    allclasses = m.model.names
 
     ver = config['ver']
     task = config['task']
@@ -364,7 +368,7 @@ def main(state):
 
     def model(source, classes=classes, conf=conf, tracker=None):
         return (
-            m(source, classes=classes, conf=conf, retina_masks=True)
+            m.predict(source, classes=classes, conf=conf, retina_masks=True)
             if tracker is None
             else m.track(
                 source,
@@ -395,7 +399,7 @@ def main(state):
         width, height = reso
         tracker = None
         if task != 'classify':
-            if not legacy:
+            if not legacy and ver != 'rtdetr':
                 tracker = sb.selectbox('Tracker', [None, 'bytetrack', 'botsort'])
             (
                 config,
@@ -444,11 +448,9 @@ def main(state):
                     predict_color,
                     show_fps,
                 )
-                tab1, tab2 = st.tabs(['Supervision', 'YOLO'])
-                with tab1:
-                    st.image(cvt(sv_out))
-                with tab2:
-                    st.image(yolo_out)
+                t1, t2 = st.tabs(['Supervision', 'YOLO'])
+                t1.image(cvt(sv_out))
+                t2.image(yolo_out)
         cap.release()
 
         save_config(config)

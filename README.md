@@ -9,7 +9,7 @@ pip install lap
 
 <details><summary>(For non-GPU users)</summary>
 
-- Install CPU version of pytorch before above 
+- Install CPU version of PyTorch first
 
 ```
 pip install -i https://download.pytorch.org/whl/cpu torch torchvision
@@ -78,17 +78,21 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 
 <details><summary>Note</summary>
 
-#### TODO
+### TODO
 
-Supported models:
+#### Supported models:
 
 - [x] All YOLOv8 models (Detect, Segment, Pose, Classify)
   - [x] With tracking
-- [x] YOLOv5 object detection
+
+Object detection only:
+
+- [x] RT-DETR
+- [ ] YOLO-NAS
+- [ ] YOLOv6
+- [x] YOLOv5
   - [x] new v5u models
   - [x] original v5 models
-- [ ] YOLOv6 object detection
-- [ ] YOLO-NAS object detection
-- [ ] RT-DETR object detection
+- [x] YOLOv3
 
 </details>
