@@ -1,12 +1,15 @@
 # Computer Vision Web UI
 
-If you're running on CPU, make sure you run this first:
+### Setup
 
+<details><summary>CPU Only</summary>
+  
+Install CPU version of pytorch before other dependencies 
 ```
 pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 ```
 
-### Setup
+</details>
 
 ```
 pip install -r requirements.txt
@@ -19,7 +22,7 @@ pip install lap
 | -------------------------- | ---------------------- |
 | `lightning run app app.py` | `streamlit run app.py` |
 
-# Features
+## Features
 
 - Run locally on [LightningAI](https://github.com/lightning-ai/lightning) / [Streamlit](https://github.com/streamlit/streamlit)
 
@@ -56,6 +59,7 @@ pip install lap
     - Box
     - Mask
     - Area
+    - FPS
 
   - Adjust
 
@@ -68,16 +72,22 @@ pip install lap
 
 - **PRODUCTION READY**
 
-  - Save drawed visual elements & config in JSON
-  - Script to load config to run in native OpenCV
+  - Save drawed visual elements & settings in JSON
+  - Run inference with OpenCV standalone from saved JSON
 
 <details><summary>Note</summary>
 
-### TODO
+#### TODO
 
-- [x] Support all YOLOv8 models (Detect, Segment, Pose, Classify)
-  - [x] Support tracking
-- [ ] Support YOLO-NAS object detections
-- [ ] Support RT-DETR object detections
+Supported models:
+
+- [x] All YOLOv8 models (Detect, Segment, Pose, Classify)
+  - [x] With tracking
+- [x] YOLOv5 object detection
+  - [x] new v5u models
+  - [x] original v5 models
+- [ ] YOLOv6 object detection
+- [ ] YOLO-NAS object detection
+- [ ] RT-DETR object detection
 
 </details>
