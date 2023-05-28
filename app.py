@@ -206,27 +206,26 @@ def get_lines_polygons(d):
     return lines, polygons
 
 
-def mycanvas(stroke, height, width, mode, bg, key):
+def mycanvas(stroke, width, height, mode, bg, key):
     return st_canvas(
         stroke_width=2,
         fill_color='#ffffff55',
         stroke_color=stroke,
+        width=width,
+        height=height,
         drawing_mode=mode,
         background_image=bg,
-        height=height,
-        width=width,
         key=key,
     )
 
 
-def draw_tool(config, task, reso, bg):
-    mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
+def draw_tool(config, task, reso, background):
     width, height = reso
 
-    if sb.checkbox('Background', value=True):
-        canvas = mycanvas('#000', height, width, mode, bg, key='e')
-    else:
-        canvas = mycanvas('#fff', height, width, mode, None, key='f')
+    mode = sb.selectbox('Draw', ('line', 'rect', 'polygon'))
+    bg = background if sb.checkbox('Background', value=True) else None
+    stroke, key = ('#fff', 'e') if bg is None else ('#000', 'f')
+    canvas = mycanvas(stroke, width, height, mode, bg, key)
 
     lines = []
     polygons = []
@@ -235,6 +234,13 @@ def draw_tool(config, task, reso, bg):
         draw = canvas.json_data['objects']
         lines, polygons = get_lines_polygons(draw)
         sb.markdown(f"{plur(len(lines), 'line')}{plur(len(polygons), 'polygon')}")
+
+    if canvas.image_data is not None:
+        if sb.button('Download canvas as image'):
+            Image.alpha_composite(
+                bg.convert('RGBA'),
+                Image.fromarray(canvas.image_data),
+            ).save('canvas.png')
 
     thickness = sb.slider('Thickness', 0, 10, 1)
     text_scale = sb.slider('Text size', 0.0, 2.0, 0.5)
@@ -304,20 +310,24 @@ def save_config(config):
             json.dump(config, f)
 
 
+def exe_button(text, cmd):
+    if sb.button(text):
+        st.code(cmd, language='bash')
+        os.system(cmd)
+
+
 def native_run(source):
-    here = Path(__file__).parent
-    option = sb.radio(f'Native run on {source}', ('Show', 'Save to video'))
+    cmd = f'{Path(__file__).parent}/native.py --source {source}'
+
+    option = sb.radio(
+        f"Native run on {source if source != 0 else 'camera'}",
+        ('Show', 'Save to video'),
+    )
     if option == 'Show':
-        if sb.button('Show with OpenCV'):
-            cmd = f'{here}/native.py --source {source}'
-            st.code(cmd, language='bash')
-            os.system(cmd)
+        exe_button('Show with OpenCV', cmd)
     elif option == 'Save to video':
         saveto = sb.text_input(' ', 'result.mp4', label_visibility='collapsed')
-        if sb.button('Save with OpenCV'):
-            cmd = f'{here}/native.py --source {source} --saveto {saveto}'
-            st.code(cmd, language='bash')
-            os.system(cmd)
+        exe_button('Save with OpenCV', f'{cmd} --saveto {saveto}')
 
 
 def update(f, height, lines, zones, _zone_ann):
@@ -382,18 +392,17 @@ def main(state):
     chosen_model = m if legacy else model
 
     def predict_image(file):
-        f = Image.open(file)
+        f = np.array(Image.open(file))
         if legacy:
-            f = np.array(f)
             det = Detections.from_yolov5(m(f))
             f = BoxAnnotator().annotate(
                 scene=f,
                 detections=det,
                 labels=[f'{conf:0.2f} {allclasses[cls]}' for _, _, conf, cls, _ in det],
             )
-            st.image(f)
         else:
-            st.image(plot(model(f)[0]))
+            f = model(f)[0].plot()
+        st.image(f)
 
     def predict_video(config, source, bg, reso):
         width, height = reso
@@ -508,22 +517,19 @@ def main(state):
                 cam_stream('a', simplecam)
 
     file = sb.file_uploader(' ', label_visibility='collapsed')
-    use_cam = sb.checkbox('Use Camera', value=True if not file else False)
+    bg = None
 
-    if use_cam:
+    if sb.checkbox('Use Camera'):
         file = None
         reso = maxcam()
         width, height = reso
 
-        picture = None
         if sb.checkbox('Annotate from selfie'):
-            picture = st.camera_input('Shoot')
+            bg = st.camera_input('Shoot')
 
-        if picture:
-            predict_image(picture)
-            bg = Image.open(picture).resize((width, height))
-        else:
-            bg = Image.fromarray(np.ones((height, width, 3), dtype=np.uint8) * 100)
+        if bg:
+            predict_image(bg)
+            bg = Image.open(bg).resize((width, height))
 
         predict_video(config, 0, bg, reso)
 

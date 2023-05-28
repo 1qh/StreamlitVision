@@ -83,19 +83,43 @@ def annot(
         get_det(f, model, legacy) if legacy else get_det(f, model, tracker=tracker)
     )
 
-    xyxy = det.xyxy
+    xyxy = det.xyxy.astype(int)
 
     text_color = line_annotator.text_color
     text_scale = line_annotator.text_scale
     text_padding = line_annotator.text_padding
 
     if predict_color:
-        centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]).astype(int) // 2
+        centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]) // 2
 
         for i in range(xyxy.shape[0]):
             x = centers[i][0]
             y = centers[i][1]
+
+            # bbox = xyxy[i]
+            # width = bbox[2] - bbox[0]
+            # height = bbox[3] - bbox[1]
+            # crop = (
+            #     f[
+            #         bbox[1] : bbox[3] - int(height * 0.3),
+            #         bbox[0] + int(width * 0.2) : bbox[2] - int(width * 0.2),
+            #     ]
+            #     .reshape(-1, 3)
+            #     .astype(np.float32)
+            # )
+            # avg_rgb = cv2.kmeans(
+            #     crop,
+            #     1,
+            #     None,
+            #     (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0),
+            #     10,
+            #     cv2.KMEANS_RANDOM_CENTERS,
+            # )[2][0].astype(np.int32)
+
+            # predict = closest(avg_rgb, ycc_colors)
+
             predict = closest(f[y, x], ycc_colors)
+
             r, g, b = colors_rgb[predict]
             draw_text(
                 scene=f,

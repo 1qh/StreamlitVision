@@ -1,4 +1,6 @@
 *.jpg
+*.jpeg
+*.png
 *.mp4
 *.mp3
 *.wav
@@ -9,6 +11,7 @@
 config.json
 _*.py
 runs/
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
