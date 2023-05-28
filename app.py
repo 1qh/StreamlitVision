@@ -3,7 +3,6 @@ import os
 from glob import glob
 from pathlib import Path
 from shutil import which
-from subprocess import check_output
 from time import gmtime, strftime
 
 import cv2

@@ -45,6 +45,17 @@ def cvt(f):
     return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
 
 
+def avg_rgb(f):
+    return cv2.kmeans(
+        cvt(f.reshape(-1, 3).astype(np.float32)),
+        1,
+        None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0),
+        10,
+        cv2.KMEANS_RANDOM_CENTERS,
+    )[2][0].astype(np.int32)
+
+
 ycc_colors = rgb2ycc(colors_rgb)
 colors_rgb = [tuple(map(int, i)) for i in colors_rgb]
 
@@ -90,36 +101,26 @@ def annot(
     text_padding = line_annotator.text_padding
 
     if predict_color:
+        naive = False
         centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]) // 2
 
         for i in range(xyxy.shape[0]):
             x = centers[i][0]
             y = centers[i][1]
 
-            # bbox = xyxy[i]
-            # width = bbox[2] - bbox[0]
-            # height = bbox[3] - bbox[1]
-            # crop = (
-            #     f[
-            #         bbox[1] : bbox[3] - int(height * 0.3),
-            #         bbox[0] + int(width * 0.2) : bbox[2] - int(width * 0.2),
-            #     ]
-            #     .reshape(-1, 3)
-            #     .astype(np.float32)
-            # )
-            # avg_rgb = cv2.kmeans(
-            #     crop,
-            #     1,
-            #     None,
-            #     (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0),
-            #     10,
-            #     cv2.KMEANS_RANDOM_CENTERS,
-            # )[2][0].astype(np.int32)
+            bb = xyxy[i]
 
-            # predict = closest(avg_rgb, ycc_colors)
+            # for shirt color of person
+            w = bb[2] - bb[0]
+            h = bb[3] - bb[1]
+            crop = f[
+                bb[1] : bb[3] - int(h * 0.4),
+                bb[0] + int(w * 0.2) : bb[2] - int(w * 0.2),
+            ]
 
-            predict = closest(f[y, x], ycc_colors)
-
+            # crop = f[bb[1] : bb[3], bb[0] : bb[2]]
+            rgb = f[y, x] if naive else avg_rgb(crop)
+            predict = closest(rgb, ycc_colors)
             r, g, b = colors_rgb[predict]
             draw_text(
                 scene=f,
