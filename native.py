@@ -24,6 +24,7 @@ from supervision import (
     get_video_frames_generator,
 )
 from ultralytics import RTDETR, YOLO
+from vidgear.gears import VideoGear, WriteGear
 
 from color import colors, colors_rgb
 
@@ -346,26 +347,27 @@ def app(source, config='config.json', saveto=None):
             show_fps,
         )[0]
 
-    codec = cv2.VideoWriter_fourcc(*'MJPG')
-    cap = cv2.VideoCapture(source)
-    cap.set(6, codec)
-    cap.set(5, fps)
-    cap.set(3, reso[0])
-    cap.set(4, reso[1])
+    options = {
+        'CAP_PROP_FOURCC': cv2.VideoWriter.fourcc(*'MJPG'),
+        'CAP_PROP_FPS': fps,
+        'CAP_PROP_FRAME_WIDTH': reso[0],
+        'CAP_PROP_FRAME_HEIGHT': reso[1],
+    }
+    stream = VideoGear(source=source, **options).start()
 
     if saveto is None:
         while True:
-            cv2.imshow('', infer(cap.read()[1]))
+            cv2.imshow('', infer(stream.read()))
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-        cap.release()
     else:
-        writer = cv2.VideoWriter(saveto, codec, fps, reso)
+        writer = WriteGear(output=saveto)
         while True:
-            writer.write(infer(cap.read()[1]))
+            writer.write(infer(stream.read()))
 
-    cap.release()
     cv2.destroyAllWindows()
+    stream.stop()
+    writer.close()
 
 
 if __name__ == '__main__':

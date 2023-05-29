@@ -28,6 +28,7 @@ from supervision import (
     get_polygon_center,
 )
 from ultralytics import RTDETR, YOLO
+from vidgear.gears import VideoGear
 
 from color import colors, colors_rgb
 from native import annot, cvt, init_annotator, maxcam
@@ -149,9 +150,9 @@ def trim_vid(path, begin, end):
 
 
 def first_frame(path):
-    cap = cv2.VideoCapture(path)
-    frame = Image.fromarray(cvt(cap.read()[1]))
-    cap.release()
+    stream = VideoGear(source=path).start()
+    frame = Image.fromarray(cvt(stream.read()))
+    stream.stop()
     return frame
 
 
@@ -432,10 +433,11 @@ def main(state):
         cam_open = sb.checkbox('Run & show on web')
         cap = cv2.VideoCapture(source)
         codec = cv2.VideoWriter_fourcc(*'MJPG')
+        cap.set(6, codec)
+        cap.set(5, 30)
         cap.set(3, width)
         cap.set(4, height)
-        cap.set(5, 30)
-        cap.set(6, codec)
+
         with st.empty():
             while cam_open:
                 _, f = cap.read()

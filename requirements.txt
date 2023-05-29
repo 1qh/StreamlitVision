@@ -3,4 +3,5 @@ streamlit_drawable_canvas
 streamlit_webrtc
 supervision
 ultralytics
+vidgear
 yolov5
