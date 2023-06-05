@@ -58,6 +58,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
   - Toggle on/off
 
     - Box
+    - Label
     - Mask
     - Area
     - FPS

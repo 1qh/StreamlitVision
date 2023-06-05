@@ -84,6 +84,7 @@ def annot(
     zones,
     zone_annotators,
     box,
+    skip_label,
     mask,
     mask_opacity,
     area,
@@ -140,6 +141,7 @@ def annot(
                 f'{conf:0.2f} {allclasses[cls]}' + (f' {track_id}' if track_id else '')
                 for _, _, conf, cls, track_id in det
             ],
+            skip_label=skip_label,
         )
     if mask:
         f = mask.annotate(scene=f, detections=det, opacity=mask_opacity)
@@ -197,6 +199,7 @@ def save(source, target, callback):
 
 def init_annotator(config, reso, polygons):
     use_box = config['box'] if 'box' in config else False
+    skip_label = config['skip_label'] if 'skip_label' in config else False
     use_mask = config['mask'] if 'mask' in config else False
     area = config['area'] if 'area' in config else False
     predict_color = config['predict_color'] if 'predict_color' in config else False
@@ -255,6 +258,7 @@ def init_annotator(config, reso, polygons):
         zones,
         zone_annotators,
         box,
+        skip_label,
         mask,
         mask_opacity,
         area,
@@ -296,6 +300,7 @@ def app(source, config='config.json', saveto=None):
         zones,
         zone_annotators,
         box,
+        skip_label,
         mask,
         mask_opacity,
         area,
@@ -340,6 +345,7 @@ def app(source, config='config.json', saveto=None):
             zones,
             zone_annotators,
             box,
+            skip_label,
             mask,
             mask_opacity,
             area,

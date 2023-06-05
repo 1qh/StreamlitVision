@@ -248,13 +248,17 @@ def draw_tool(config, task, reso, background):
     text_padding = sb.slider('Text padding', 0, 10, 2)
     text_color = sb.color_picker('Text color', '#000000')
 
-    c1, c2, c3 = sb.columns(3)
+    c1, c2 = sb.columns(2)
     use_box = c1.checkbox('Box', value=True)
+    if use_box:
+        skip_label = not c2.checkbox('Label', value=True)
+        config['skip_label'] = skip_label
     if task == 'segment':
-        use_mask = c2.checkbox('Mask', value=True)
+        c1, c2 = sb.columns(2)
+        use_mask = c1.checkbox('Mask', value=True)
         if use_mask:
             config['mask'] = use_mask
-            area = c3.checkbox('Area', value=True)
+            area = c2.checkbox('Area', value=True)
             mask_opacity = sb.slider('Opacity', 0.0, 1.0, 0.5)
             config['area'] = area
             config['mask_opacity'] = mask_opacity
@@ -282,6 +286,7 @@ def draw_tool(config, task, reso, background):
         zones,
         zone_annotators,
         box,
+        skip_label,
         mask,
         mask_opacity,
         area,
@@ -296,6 +301,7 @@ def draw_tool(config, task, reso, background):
         zones,
         zone_annotators,
         box,
+        skip_label,
         mask,
         mask_opacity,
         area,
@@ -417,6 +423,7 @@ def main(state):
                 zones,
                 zone_annotators,
                 box,
+                skip_label,
                 mask,
                 mask_opacity,
                 area,
@@ -452,6 +459,7 @@ def main(state):
                     zones,
                     zone_annotators,
                     box,
+                    skip_label,
                     mask,
                     mask_opacity,
                     area,
