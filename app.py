@@ -97,7 +97,7 @@ def load():
         elif ver == 'v5':
             tasks = tasks[:3]
 
-        custom = sb.checkbox('Custom weight', value=True)
+        custom = sb.checkbox('Custom weight')
         task = c1.selectbox(
             'Task',
             tasks,

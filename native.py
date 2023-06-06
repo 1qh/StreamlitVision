@@ -200,19 +200,20 @@ def save(source, target, callback):
 
 
 def init_annotator(config, reso, polygons):
-    use_box = config['box'] if 'box' in config else False
-    skip_label = config['skip_label'] if 'skip_label' in config else False
-    use_mask = config['mask'] if 'mask' in config else False
-    area = config['area'] if 'area' in config else False
-    predict_color = config['predict_color'] if 'predict_color' in config else False
-    show_fps = config['show_fps'] if 'show_fps' in config else False
-    visual = config['visual'] if 'visual' in config else {}
+    use_box = config.get('box', False)
+    skip_label = config.get('skip_label', False)
+    use_mask = config.get('mask', False)
+    area = config.get('area', False)
+    predict_color = config.get('predict_color', False)
+    show_fps = config.get('show_fps', False)
+    visual = config.get('visual', {})
 
     thickness = 1
     text_scale = 0.5
     text_offset = 1
     text_padding = 2
     text_color = '#000000'
+
     if visual != {}:
         thickness = visual['thickness']
         text_scale = visual['text_scale']
