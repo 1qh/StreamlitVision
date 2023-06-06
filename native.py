@@ -65,12 +65,14 @@ def get_det(f, model, legacy=False, tracker=None):
     if legacy:
         return Detections.from_yolov5(model(f)), cvt(f)
     res = model(f, tracker=tracker)[0]
-    det = Detections.from_yolov8(res)
-    if res.boxes.id is not None:
-        det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
-    if res.masks is not None:
-        det.mask = res.masks.data.cpu().numpy()
-    return det, cvt(res.plot())
+    if res.boxes is not None:
+        det = Detections.from_yolov8(res)
+        if res.boxes.id is not None:
+            det.tracker_id = res.boxes.id.cpu().numpy().astype(int)
+        if res.masks is not None:
+            det.mask = res.masks.data.cpu().numpy()
+        return det, cvt(res.plot())
+    return Detections.empty(), cvt(res.plot())
 
 
 def annot(
@@ -205,6 +207,12 @@ def init_annotator(config, reso, polygons):
     predict_color = config['predict_color'] if 'predict_color' in config else False
     show_fps = config['show_fps'] if 'show_fps' in config else False
     visual = config['visual'] if 'visual' in config else {}
+
+    thickness = 1
+    text_scale = 0.5
+    text_offset = 1
+    text_padding = 2
+    text_color = '#000000'
     if visual != {}:
         thickness = visual['thickness']
         text_scale = visual['text_scale']

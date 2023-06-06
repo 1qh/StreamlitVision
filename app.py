@@ -41,10 +41,19 @@ if 'path' not in session_state:
 
 
 def st_config():
-    set_page_config(layout='wide')
+    set_page_config(
+        page_icon='🎥',
+        page_title='ComputerVisionWebUI',
+        layout='wide',
+        initial_sidebar_state='expanded',
+        menu_items={
+            'Report a bug': 'https://github.com/1qh/ComputerVisionWebUI/issues/new',
+        },
+    )
     st.markdown(
         """
     <style>
+    div.block-container {padding-top:2rem}
     footer {visibility: hidden;}
     @font-face {font-family: 'SF Pro Display';}
     html, body, [class*="css"]  {font-family: 'SF Pro Display';}
@@ -81,22 +90,28 @@ def load():
         }
         tasks = list(suffix.keys())
 
-        ver = sb.selectbox('YOLO version', ('v8', 'v6', 'v5u', 'v5', 'v3'))
+        c0, c1, c2 = sb.columns(3)
+        ver = c0.selectbox('Version', ('v8', 'v6', 'v5u', 'v5', 'v3'))
         if ver in ('v3', 'v5u', 'v6'):
             tasks = tasks[:1]
         elif ver == 'v5':
             tasks = tasks[:3]
 
-        pretrained = sb.checkbox('Pretrained', value=True)
-        c1, c2 = sb.columns(2)
-        task = c1.selectbox('Task', tasks)
-        if pretrained:
-            size = c2.selectbox(
-                'Model size', ('n', 's', 'm', 'l', 'x'), disabled=ver == 'v3'
-            )
-            model_path = f"yolo{ver[:2]}{size if ver != 'v3' else ''}{suffix[task]}{ver[2] if len(ver) > 2 else ''}.pt"
+        custom = sb.checkbox('Custom weight', value=True)
+        task = c1.selectbox(
+            'Task',
+            tasks,
+            disabled=custom and ver == 'v8',
+        )
+        size = c2.selectbox(
+            'Size',
+            ('n', 's', 'm', 'l', 'x'),
+            disabled=custom or ver == 'v3',
+        )
+        if custom:
+            model_path = sb.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
         else:
-            model_path = c2.selectbox('Custom model', glob('*.pt'))
+            model_path = f"yolo{ver[:2]}{size if ver != 'v3' else ''}{suffix[task]}{ver[2] if len(ver) > 2 else ''}.pt"
 
         if ver == 'v5':
             model = yolov5.load(model_path)
@@ -105,12 +120,14 @@ def load():
         else:
             model = YOLO(model_path)
             task = model.overrides['task']
+            if custom:
+                sb.success(f'{task.capitalize()} weights loaded')
             config['model'] = model.ckpt_path
 
     elif model_family == 'RT-DETR':
         ver = 'rtdetr'
         task = 'detect'
-        size = sb.selectbox('Model size', ('l', 'x'))
+        size = sb.selectbox('Size', ('l', 'x'))
         model_path = f'{ver}-{size}.pt'
         model = RTDETR(model_path)
         config['model'] = model_path
@@ -244,7 +261,7 @@ def draw_tool(config, task, reso, background):
 
     thickness = sb.slider('Thickness', 0, 10, 1)
     text_scale = sb.slider('Text size', 0.0, 2.0, 0.5)
-    text_offset = sb.slider('Text offset', 0.0, 10.0, 1.0)
+    text_offset = sb.slider('Text offset', 0.0, 10.0, 1.0) if len(lines) else 0.0
     text_padding = sb.slider('Text padding', 0, 10, 2)
     text_color = sb.color_picker('Text color', '#000000')
 
@@ -411,11 +428,27 @@ def main(state):
         st.image(f)
 
     def predict_video(config, source, bg, reso):
+        cam_open = st.checkbox('Run & show on web')
         width, height = reso
         tracker = None
+
+        lines = []
+        (
+            line_annotator,
+            zones,
+            zone_annotators,
+            box,
+            skip_label,
+            mask,
+            mask_opacity,
+            area,
+            predict_color,
+            show_fps,
+        ) = init_annotator(config, reso, [])
+
         if task != 'classify':
             if not legacy and ver != 'rtdetr':
-                tracker = sb.selectbox('Tracker', [None, 'bytetrack', 'botsort'])
+                tracker = sb.selectbox('Tracker', ['bytetrack', 'botsort', None])
             (
                 config,
                 lines,
@@ -435,9 +468,9 @@ def main(state):
                 reso,
                 bg,
             )
+
         config['tracker'] = tracker
 
-        cam_open = sb.checkbox('Run & show on web')
         cap = cv2.VideoCapture(source)
         codec = cv2.VideoWriter_fourcc(*'MJPG')
         cap.set(6, codec)
