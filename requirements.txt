@@ -2,6 +2,7 @@ lightning
 streamlit_drawable_canvas
 streamlit_webrtc
 supervision
+typer[all]
 ultralytics
 vidgear
 yolov5
