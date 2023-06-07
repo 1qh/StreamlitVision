@@ -1,3 +1,4 @@
+dacite
 lightning
 streamlit_drawable_canvas
 streamlit_webrtc
