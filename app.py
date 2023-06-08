@@ -1,5 +1,4 @@
 import os
-from glob import glob
 from pathlib import Path
 from shutil import which
 from time import gmtime, strftime
@@ -7,7 +6,6 @@ from time import gmtime, strftime
 import cv2
 import numpy as np
 import streamlit as st
-import yolov5
 from av import VideoFrame
 from lightning import LightningApp, LightningFlow
 from lightning.app.frontend import StreamlitFrontend
@@ -17,10 +15,9 @@ from streamlit import session_state, set_page_config
 from streamlit import sidebar as sb
 from streamlit_webrtc import webrtc_streamer
 from supervision import BoxAnnotator, Detections, VideoInfo
-from ultralytics import RTDETR, YOLO
 from vidgear.gears import VideoGear
 
-from core import Annotator, Model, ModelInfo, cvt, maxcam, toggle
+from core import Annotator, Model, cvt, maxcam
 
 _shape = None
 
@@ -54,124 +51,24 @@ def st_config():
     )
 
 
-def custom_classes(model):
-    d = model.model.names
-    all = list(d.values())
-
-    if sb.checkbox('Custom Classes'):
-        return [
-            all.index(i) for i in sb.multiselect(' ', all, label_visibility='collapsed')
-        ]
-    else:
-        return list(d.keys())
-
-
-def load():
-    tracker = None
-    family = sb.radio('Model family', ('YOLO', 'RT-DETR'), horizontal=True)
-    if family == 'YOLO':
-        suffix = {
-            'Detect': '',
-            'Segment': '-seg',
-            'Classify': '-cls',
-            'Pose': '-pose',
-        }
-        custom = sb.checkbox('Custom weight')
-
-        c1, c2 = sb.columns(2)
-        c3, c4 = sb.columns(2)
-        ver = c1.selectbox(
-            'Version',
-            ('v8', 'v6', 'v5u', 'v5', 'v3'),
-            label_visibility='collapsed',
-        )
-        legacy = ver == 'v5'
-        has_sizes = ver != 'v3'
-        has_tasks = ver == 'v8'
-        size = (
-            c2.selectbox(
-                'Size',
-                ('n', 's', 'm', 'l', 'x'),
-                label_visibility='collapsed',
-            )
-            if has_sizes and not custom
-            else ''
-        )
-        task = (
-            c3.selectbox(
-                'Task',
-                list(suffix.keys()),
-                label_visibility='collapsed',
-            )
-            if has_tasks and not custom
-            else 'detect'
-        )
-        if custom:
-            path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
-        else:
-            path = f"yolo{ver[:2]}{size if has_sizes else ''}{suffix[task] if has_tasks else ''}{ver[2] if len(ver) > 2 else ''}.pt"
-
-        if legacy:
-            model = yolov5.load(path)
-        else:
-            model = YOLO(path)
-            task = model.overrides['task']
-            tracker = (
-                c4.selectbox(
-                    'Tracker',
-                    ['No track', 'bytetrack', 'botsort'],
-                    label_visibility='collapsed',
-                )
-                if task != 'classify'
-                else None
-            )
-            tracker = tracker if tracker != 'No track' else None
-            if custom:
-                c3.subheader(f'{task.capitalize()}')
-            path = model.ckpt_path
-
-    elif family == 'RT-DETR':
-        ver = 'rtdetr'
-        task = 'detect'
-        size = sb.selectbox('Size', ('l', 'x'))
-        path = f'{ver}-{size}.pt'
-        model = RTDETR(path)
-
-    conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-    classes = custom_classes(model)
-
-    return ModelInfo(
-        path=path,
-        classes=classes,
-        ver=ver,
-        task=task,
-        conf=conf,
-        tracker=tracker,
-    )
-
-
-def hms(s):
+def hms(s: int) -> str:
     return strftime('%H:%M:%S', gmtime(s))
 
 
-def plot(i):
-    return cvt(i.plot())
-
-
-def trim_vid(path, begin, end):
+def trim_vid(path: str, begin: str, end: str) -> str:
     trim = f'trim_{path[3:]}'
     os.system(f'ffmpeg -y -i {path} -ss {begin} -to {end} -c copy {trim}')
     return trim
 
 
-def first_frame(path):
+def first_frame(path: str) -> Image.Image:
     stream = VideoGear(source=path).start()
     frame = Image.fromarray(cvt(stream.read()))
     stream.stop()
     return frame
 
 
-def prepare(path):
+def prepare(path: str):
     vid = VideoInfo.from_video_path(path)
 
     if which('ffmpeg'):
@@ -193,13 +90,13 @@ def prepare(path):
         session_state['path'] = path
 
 
-def exe_button(place, text, cmd):
+def exe_button(place, text: str, cmd: str):
     if place.button(text):
         st.code(cmd, language='bash')
         os.system(cmd)
 
 
-def native_run(place, source, an):
+def native_run(place, source: str | int, an: Annotator):
     cmd = f'{Path(__file__).parent}/native.py --source {source}'
     c1, c2 = place.columns([1, 3])
     option = c2.radio(
@@ -217,9 +114,8 @@ def native_run(place, source, an):
 
 def main(state):
     st_config()
-
-    info = load()
-    model = Model(info)
+    running = sb.checkbox('Realtime inference')
+    model = Model.ui()
 
     def predict_image(file):
         f = np.array(Image.open(file))
@@ -236,13 +132,16 @@ def main(state):
             f = model(f)[0].plot()
         st.image(f)
 
-    def predict_video(source, bg, reso):
-        running = toggle(st, 'Run', key='r')
+    def predict_video(
+        source: str | int,
+        bg: Image.Image,
+        reso: tuple[int, int],
+    ):
         width, height = reso
         task = model.info.task
 
         an = (
-            Annotator.ui(info, reso, bg)
+            Annotator.ui(model, reso, bg)
             if task != 'classify'
             else Annotator(model=model, reso=reso)
         )

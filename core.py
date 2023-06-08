@@ -1,6 +1,7 @@
 import json
 import time
 from dataclasses import asdict, dataclass, field
+from glob import glob
 from subprocess import check_output
 
 import cv2
@@ -31,11 +32,11 @@ from ultralytics import RTDETR, YOLO
 from color import colors, colors_rgb
 
 
-def cvt(f):
+def cvt(f: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
 
 
-def maxcam():
+def maxcam() -> tuple[int, int]:
     reso = (
         check_output(
             "v4l2-ctl -d /dev/video0 --list-formats-ext | grep Size: | tail -1 | awk '{print $NF}'",
@@ -48,16 +49,16 @@ def maxcam():
     return width, height
 
 
-def plur(n, s):
+def plur(n: int, s: str) -> str:
     return f"\n- {n} {s}{'s'[:n^1]}" if n else ''
 
 
-def rgb2hex(rgb):
+def rgb2hex(rgb: tuple[int, int, int]) -> str:
     r, g, b = rgb
     return f'#{r:02x}{g:02x}{b:02x}'
 
 
-def rgb2ycc(rgb):
+def rgb2ycc(rgb: np.ndarray) -> np.ndarray:
     rgb = rgb / 255.0
     r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
     y = 0.299 * r + 0.587 * g + 0.114 * b
@@ -66,11 +67,11 @@ def rgb2ycc(rgb):
     return np.stack([y, cb, cr], axis=-1)
 
 
-def closest(rgb, ycc_colors):
+def closest(rgb: np.ndarray, ycc_colors: np.ndarray) -> int:
     return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
 
 
-def avg_rgb(f):
+def avg_rgb(f: np.ndarray) -> np.ndarray:
     return cv2.kmeans(
         cvt(f.reshape(-1, 3).astype(np.float32)),
         1,
@@ -79,6 +80,17 @@ def avg_rgb(f):
         10,
         cv2.KMEANS_RANDOM_CENTERS,
     )[2][0].astype(np.int32)
+
+
+def filter_by_vals(d: dict) -> list[int | str]:
+    all = list(d.values())
+
+    if sb.checkbox('Custom Classes'):
+        return [
+            all.index(i) for i in sb.multiselect(' ', all, label_visibility='collapsed')
+        ]
+    else:
+        return list(d.keys())
 
 
 def mycanvas(stroke, width, height, mode, bg, key):
@@ -92,23 +104,6 @@ def mycanvas(stroke, width, height, mode, bg, key):
         background_image=bg,
         key=key,
     )
-
-
-def toggle(place, *args, key=None, **kwargs):
-    if key is None:
-        raise ValueError("Must pass key")
-
-    if key not in st.session_state:
-        st.session_state[key] = False
-
-    if "type" not in kwargs:
-        kwargs["type"] = "primary" if st.session_state[key] else "secondary"
-
-    if place.button(*args, **kwargs):
-        st.session_state[key] = not st.session_state[key]
-        st.experimental_rerun()
-
-    return st.session_state[key]
 
 
 ycc_colors = rgb2ycc(colors_rgb)
@@ -229,7 +224,7 @@ class Model:
             )
         )
 
-    def det(self, f):
+    def det(self, f: np.ndarray) -> tuple[Detections, np.ndarray]:
         if self.legacy:
             return Detections.from_yolov5(self.model(f)), cvt(f)
 
@@ -241,6 +236,97 @@ class Model:
             return det, cvt(res.plot())
 
         return Detections.empty(), cvt(res.plot())
+
+    @classmethod
+    def ui(cls):
+        tracker = None
+        family = sb.radio(
+            'Model family',
+            ('YOLO', 'RT-DETR'),
+            horizontal=True,
+        )
+        if family == 'YOLO':
+            suffix = {
+                'Detect': '',
+                'Segment': '-seg',
+                'Classify': '-cls',
+                'Pose': '-pose',
+            }
+            custom = sb.checkbox('Custom weight')
+            c1, c2 = sb.columns(2)
+            c3, c4 = sb.columns(2)
+
+            ver = c1.selectbox(
+                'Version',
+                ('v8', 'v6', 'v5u', 'v5', 'v3'),
+                label_visibility='collapsed',
+            )
+            legacy = ver == 'v5'
+            has_sizes = ver != 'v3'
+            has_tasks = ver == 'v8'
+
+            size = (
+                c2.selectbox(
+                    'Size',
+                    ('n', 's', 'm', 'l', 'x'),
+                    label_visibility='collapsed',
+                )
+                if has_sizes and not custom
+                else ''
+            )
+            task = (
+                c3.selectbox(
+                    'Task',
+                    list(suffix.keys()),
+                    label_visibility='collapsed',
+                )
+                if has_tasks and not custom
+                else 'detect'
+            )
+            if custom:
+                path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
+            else:
+                path = f"yolo{ver[:2]}{size if has_sizes else ''}{suffix[task] if has_tasks else ''}{ver[2] if len(ver) > 2 else ''}.pt"
+
+            if legacy:
+                model = yolov5.load(path)
+            else:
+                model = YOLO(path)
+                task = model.overrides['task']
+                tracker = (
+                    c4.selectbox(
+                        'Tracker',
+                        ['No track', 'bytetrack', 'botsort'],
+                        label_visibility='collapsed',
+                    )
+                    if task != 'classify'
+                    else None
+                )
+                tracker = tracker if tracker != 'No track' else None
+                if custom:
+                    c3.subheader(f'{task.capitalize()}')
+                path = model.ckpt_path
+
+        elif family == 'RT-DETR':
+            ver = 'rtdetr'
+            task = 'detect'
+            size = sb.selectbox('Size', ('l', 'x'))
+            path = f'{ver}-{size}.pt'
+            model = RTDETR(path)
+
+        conf = sb.slider('Threshold', max_value=1.0, value=0.25)
+        classes = filter_by_vals(model.names)
+
+        return cls(
+            ModelInfo(
+                path=path,
+                classes=classes,
+                ver=ver,
+                task=task,
+                conf=conf,
+                tracker=tracker,
+            )
+        )
 
 
 class Annotator:
@@ -315,7 +401,7 @@ class Annotator:
             draw=from_dict(Draw, d['draw']),
         )
 
-    def __call__(self, f: np.ndarray):
+    def __call__(self, f: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         begin = time.time()
         dp = self.display
         tw = self.tweak
@@ -427,11 +513,12 @@ class Annotator:
     @classmethod
     def ui(
         cls,
-        info: ModelInfo,
+        model: Model,
         reso: tuple[int, int],
         background: Image.Image | None,
     ):
         width, height = reso
+        task = model.info.task
         c1, c2 = st.columns([1, 4])
         mode = c1.selectbox(
             'Draw',
@@ -464,9 +551,9 @@ class Annotator:
             predict_color=c2.checkbox('Predict color'),
             box=c3.checkbox('Box', value=True),
             skip_label=not c4.checkbox('Label', value=True),
-            mask=c5.checkbox('Mask', value=True) if info.task == 'segment' else False,
+            mask=c5.checkbox('Mask', value=True) if task == 'segment' else False,
             mask_opacity=sb.slider('Opacity', 0.0, 1.0, 0.5)
-            if info.task == 'segment'
+            if task == 'segment'
             else 0.0,
             area=c6.checkbox('Area', value=True),
         )
@@ -483,7 +570,7 @@ class Annotator:
         )
 
         return cls(
-            model=Model(info),
+            model=model,
             reso=reso,
             display=display,
             tweak=tweak,
