@@ -20,7 +20,7 @@ from supervision import BoxAnnotator, Detections, VideoInfo
 from ultralytics import RTDETR, YOLO
 from vidgear.gears import VideoGear
 
-from core import Annotator, Model, ModelInfo, cvt, maxcam
+from core import Annotator, Model, ModelInfo, cvt, maxcam, toggle
 
 _shape = None
 
@@ -41,6 +41,7 @@ def st_config():
     st.markdown(
         """
     <style>
+    div.stButton button {width: 100%;}
     div.block-container {padding-top:2rem}
     footer {visibility: hidden;}
     @font-face {font-family: 'SF Pro Display';}
@@ -66,6 +67,7 @@ def custom_classes(model):
 
 
 def load():
+    tracker = None
     family = sb.radio('Model family', ('YOLO', 'RT-DETR'), horizontal=True)
     if family == 'YOLO':
         suffix = {
@@ -74,39 +76,58 @@ def load():
             'Classify': '-cls',
             'Pose': '-pose',
         }
-        tasks = list(suffix.keys())
-
-        c0, c1, c2 = sb.columns(3)
-        ver = c0.selectbox('Version', ('v8', 'v6', 'v5u', 'v5', 'v3'))
-        if ver in ('v3', 'v5u', 'v6'):
-            tasks = tasks[:1]
-        elif ver == 'v5':
-            tasks = tasks[:3]
-
         custom = sb.checkbox('Custom weight')
-        task = c1.selectbox(
-            'Task',
-            tasks,
-            disabled=custom and ver == 'v8',
+
+        c1, c2 = sb.columns(2)
+        c3, c4 = sb.columns(2)
+        ver = c1.selectbox(
+            'Version',
+            ('v8', 'v6', 'v5u', 'v5', 'v3'),
+            label_visibility='collapsed',
         )
-        size = c2.selectbox(
-            'Size',
-            ('n', 's', 'm', 'l', 'x'),
-            disabled=custom or ver == 'v3',
+        legacy = ver == 'v5'
+        has_sizes = ver != 'v3'
+        has_tasks = ver == 'v8'
+        size = (
+            c2.selectbox(
+                'Size',
+                ('n', 's', 'm', 'l', 'x'),
+                label_visibility='collapsed',
+            )
+            if has_sizes and not custom
+            else ''
+        )
+        task = (
+            c3.selectbox(
+                'Task',
+                list(suffix.keys()),
+                label_visibility='collapsed',
+            )
+            if has_tasks and not custom
+            else 'detect'
         )
         if custom:
-            path = sb.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
+            path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
         else:
-            path = f"yolo{ver[:2]}{size if ver != 'v3' else ''}{suffix[task]}{ver[2] if len(ver) > 2 else ''}.pt"
+            path = f"yolo{ver[:2]}{size if has_sizes else ''}{suffix[task] if has_tasks else ''}{ver[2] if len(ver) > 2 else ''}.pt"
 
-        if ver == 'v5':
+        if legacy:
             model = yolov5.load(path)
-            task = task.lower()
         else:
             model = YOLO(path)
             task = model.overrides['task']
+            tracker = (
+                c4.selectbox(
+                    'Tracker',
+                    ['No track', 'bytetrack', 'botsort'],
+                    label_visibility='collapsed',
+                )
+                if task != 'classify'
+                else None
+            )
+            tracker = tracker if tracker != 'No track' else None
             if custom:
-                sb.success(f'{task.capitalize()} weights loaded')
+                c3.subheader(f'{task.capitalize()}')
             path = model.ckpt_path
 
     elif family == 'RT-DETR':
@@ -118,10 +139,6 @@ def load():
 
     conf = sb.slider('Threshold', max_value=1.0, value=0.25)
     classes = custom_classes(model)
-
-    tracker = None
-    if task != 'classify' and ver not in ('v5', 'rtdetr'):
-        tracker = sb.selectbox('Tracker', ['bytetrack', 'botsort', None])
 
     return ModelInfo(
         path=path,
@@ -176,24 +193,26 @@ def prepare(path):
         session_state['path'] = path
 
 
-def exe_button(text, cmd):
-    if sb.button(text):
+def exe_button(place, text, cmd):
+    if place.button(text):
         st.code(cmd, language='bash')
         os.system(cmd)
 
 
-def native_run(source):
+def native_run(place, source, an):
     cmd = f'{Path(__file__).parent}/native.py --source {source}'
-
-    option = sb.radio(
+    c1, c2 = place.columns([1, 3])
+    option = c2.radio(
         f"Native run on {source if source != 0 else 'camera'}",
-        ('Show', 'Save to video'),
+        ('Realtime inference', 'Save to video'),
     )
-    if option == 'Show':
-        exe_button('Show with OpenCV', cmd)
+    if option == 'Realtime inference':
+        exe_button(c1, 'Show with OpenCV', cmd)
     elif option == 'Save to video':
-        saveto = sb.text_input(' ', 'result.mp4', label_visibility='collapsed')
-        exe_button('Save with OpenCV', f'{cmd} --saveto {saveto}')
+        saveto = c1.text_input(' ', 'result.mp4', label_visibility='collapsed')
+        exe_button(c1, 'Save with OpenCV', f'{cmd} --saveto {saveto}')
+    if c1.button('Save config to json'):
+        an.dump('config.json')
 
 
 def main(state):
@@ -218,15 +237,16 @@ def main(state):
         st.image(f)
 
     def predict_video(source, bg, reso):
+        running = toggle(st, 'Run', key='r')
         width, height = reso
         task = model.info.task
-        cam_open = st.checkbox('Run & show on web')
 
         an = (
             Annotator.ui(info, reso, bg)
             if task != 'classify'
             else Annotator(model=model, reso=reso)
         )
+        native_run(st, source, an)
 
         cap = cv2.VideoCapture(source)
         codec = cv2.VideoWriter_fourcc(*'MJPG')
@@ -235,18 +255,26 @@ def main(state):
         cap.set(3, width)
         cap.set(4, height)
 
-        with st.empty():
-            while cam_open:
-                _, f = cap.read()
-                sv_out, yolo_out = an(f)
-                t1, t2 = st.tabs(['Supervision', 'YOLO'])
-                t1.image(cvt(sv_out))
-                t2.image(yolo_out)
-        cap.release()
+        if source != 0:
+            count = 0
+            total_frames = VideoInfo.from_video_path(source).total_frames
 
-        if sb.button('Save config to json'):
-            an.dump('config.json')
-        native_run(source)
+        mt = st.empty()
+        while running:
+            t1, t2 = mt.tabs(['Main', 'Fallback'])
+            if task in ('pose', 'classify'):
+                t1, t2 = t2, t1
+            success, f = cap.read()
+            if success:
+                f, res = an(f)
+                t1.image(cvt(f))
+                t2.image(res)
+                if source != 0:
+                    count += 1
+                    t1.progress(count / total_frames)
+            else:
+                break
+        cap.release()
 
         if source == 0:
 

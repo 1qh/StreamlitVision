@@ -44,7 +44,7 @@ def maxcam():
         .decode()
         .split('x')
     )
-    width, height = [int(i) for i in reso] if len(reso) == 2 else (640, 480)
+    width, height = [int(i) for i in reso] if len(reso) == 2 else (640, 360)
     return width, height
 
 
@@ -92,6 +92,23 @@ def mycanvas(stroke, width, height, mode, bg, key):
         background_image=bg,
         key=key,
     )
+
+
+def toggle(place, *args, key=None, **kwargs):
+    if key is None:
+        raise ValueError("Must pass key")
+
+    if key not in st.session_state:
+        st.session_state[key] = False
+
+    if "type" not in kwargs:
+        kwargs["type"] = "primary" if st.session_state[key] else "secondary"
+
+    if place.button(*args, **kwargs):
+        st.session_state[key] = not st.session_state[key]
+        st.experimental_rerun()
+
+    return st.session_state[key]
 
 
 ycc_colors = rgb2ycc(colors_rgb)
@@ -415,13 +432,13 @@ class Annotator:
         background: Image.Image | None,
     ):
         width, height = reso
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2 = st.columns([1, 4])
         mode = c1.selectbox(
             'Draw',
             ('line', 'rect', 'polygon'),
             label_visibility='collapsed',
         )
-        bg = background if c4.checkbox('Background', value=True) else None
+        bg = background if c2.checkbox('Background', value=True) else None
         stroke, key = ('#fff', 'e') if bg is None else ('#000', 'f')
         canvas = mycanvas(stroke, width, height, mode, bg, key)
 
@@ -432,7 +449,7 @@ class Annotator:
             c2.markdown(draw)
 
         if canvas.image_data is not None and len(draw) > 0:
-            if c3.button('Export canvas image'):
+            if c1.button('Export canvas image'):
                 Image.alpha_composite(
                     bg.convert('RGBA'),
                     Image.fromarray(canvas.image_data),

@@ -24,6 +24,7 @@ def app(source=0, config='config.json', saveto=None):
         'CAP_PROP_FRAME_WIDTH': reso[0],
         'CAP_PROP_FRAME_HEIGHT': reso[1],
     }
+    writer = WriteGear(output=saveto if saveto is not None else 'out.mp4')
     stream = VideoGear(source=source, **options).start()
     if saveto is None:
         while True:
@@ -31,7 +32,6 @@ def app(source=0, config='config.json', saveto=None):
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     else:
-        writer = WriteGear(output=saveto)
         while True:
             writer.write(an(stream.read())[0])
 
