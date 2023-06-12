@@ -3,6 +3,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from glob import glob
 from subprocess import check_output
+from typing import Generator
 
 import cv2
 import numpy as np
@@ -23,11 +24,13 @@ from supervision import (
     Point,
     PolygonZone,
     PolygonZoneAnnotator,
+    VideoInfo,
     crop,
     draw_text,
     get_polygon_center,
 )
 from ultralytics import RTDETR, YOLO
+from vidgear.gears import VideoGear
 
 from color import colors, colors_rgb
 
@@ -104,6 +107,19 @@ def mycanvas(stroke, width, height, mode, bg, key):
         background_image=bg,
         key=key,
     )
+
+
+def legacy_generator(stream, model) -> Generator:
+    while True:
+        f = stream.read()
+        yield f, model(f)
+
+
+def first_frame(path: str) -> Image.Image:
+    stream = VideoGear(source=path).start()
+    frame = Image.fromarray(cvt(stream.read()))
+    stream.stop()
+    return frame
 
 
 ycc_colors = rgb2ycc(colors_rgb)
@@ -206,10 +222,14 @@ class Model:
 
         self.info = info
 
-    def __call__(self, source):
+    def __call__(self, source: str | int) -> Generator:
+        if self.legacy:
+            stream = VideoGear(source=source).start()
+            return legacy_generator(stream, self.model)
         return (
             self.model.predict(
                 source,
+                stream=True,
                 classes=self.classes,
                 conf=self.conf,
                 retina_masks=True,
@@ -217,6 +237,7 @@ class Model:
             if self.tracker is None
             else self.model.track(
                 source,
+                stream=True,
                 classes=self.classes,
                 conf=self.conf,
                 retina_masks=True,
@@ -224,11 +245,10 @@ class Model:
             )
         )
 
-    def det(self, f: np.ndarray) -> tuple[Detections, np.ndarray]:
+    def from_res(self, res) -> tuple[Detections, np.ndarray]:
         if self.legacy:
-            return Detections.from_yolov5(self.model(f)), cvt(f)
+            return Detections.from_yolov5(res[1]), res[0]
 
-        res = self(f)[0]
         if res.boxes is not None:
             det = Detections.from_yolov8(res)
             if res.boxes.id is not None:
@@ -237,8 +257,43 @@ class Model:
 
         return Detections.empty(), cvt(res.plot())
 
+    def gen(self, source: str | int) -> Generator:
+        start = time.time()
+        for res in self(source):
+            f = res[0] if self.legacy else res.orig_img
+            yield f, self.from_res(res), time.time() - start
+            start = time.time()
+
+    def from_frame(self, f: np.ndarray) -> tuple[Detections, np.ndarray]:
+        if self.legacy:
+            return Detections.from_yolov5(self.model(f)), np.zeros((1, 1, 3))
+
+        res = self.model.predict(
+            f,
+            classes=self.classes,
+            conf=self.conf,
+            retina_masks=True,
+        )[0]
+        if res.boxes is not None:
+            return Detections.from_yolov8(res), cvt(res.plot())
+
+        return Detections.empty(), cvt(res.plot())
+
+    def predict_image(self, file):
+        f = np.array(Image.open(file))
+        if self.legacy:
+            det = Detections.from_yolov5(self.model(f))
+            f = BoxAnnotator().annotate(
+                scene=f,
+                detections=det,
+                labels=[f'{conf:0.2f} {self.names[cls]}' for _, _, conf, cls, _ in det],
+            )
+        else:
+            f = cvt(self.from_frame(f)[1])
+        st.image(f)
+
     @classmethod
-    def ui(cls):
+    def ui(cls, track=True):
         tracker = None
         family = sb.radio(
             'Model family',
@@ -293,16 +348,19 @@ class Model:
             else:
                 model = YOLO(path)
                 task = model.overrides['task']
-                tracker = (
-                    c4.selectbox(
-                        'Tracker',
-                        ['No track', 'bytetrack', 'botsort'],
-                        label_visibility='collapsed',
+
+                if track:
+                    tracker = (
+                        c4.selectbox(
+                            'Tracker',
+                            ['No track', 'bytetrack', 'botsort'],
+                            label_visibility='collapsed',
+                        )
+                        if task != 'classify'
+                        else None
                     )
-                    if task != 'classify'
-                    else None
-                )
-                tracker = tracker if tracker != 'No track' else None
+                    tracker = tracker if tracker != 'No track' else None
+
                 if custom:
                     c3.subheader(f'{task.capitalize()}')
                 path = model.ckpt_path
@@ -315,7 +373,7 @@ class Model:
             model = RTDETR(path)
 
         conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-        classes = filter_by_vals(model.names)
+        classes = filter_by_vals(model.model.names)
 
         return cls(
             ModelInfo(
@@ -343,6 +401,7 @@ class Annotator:
         self.draw = draw
         self.display = display
         self.tweak = tweak
+        self.unneeded = self.model.info.task in ('classify', 'pose')
         self.ls = [
             LineZone(start=Point(i[0][0], i[0][1]), end=Point(i[1][0], i[1][1]))
             for i in self.draw.lines
@@ -401,12 +460,16 @@ class Annotator:
             draw=from_dict(Draw, d['draw']),
         )
 
-    def __call__(self, f: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def __call__(
+        self,
+        f: np.ndarray,
+        det,
+        timetaken,
+    ) -> np.ndarray:
         begin = time.time()
         dp = self.display
         tw = self.tweak
         names = self.model.names
-        det, res = self.model.det(f)
         xyxy = det.xyxy.astype(int)
 
         if dp.predict_color:
@@ -475,7 +538,7 @@ class Annotator:
             f = zone.annotate(f)
 
         if dp.fps:
-            fps = 1 / (time.time() - begin)
+            fps = 1 / (time.time() - begin + timetaken)
             draw_text(
                 scene=f,
                 text=f'{fps:.1f}',
@@ -484,7 +547,17 @@ class Annotator:
                 text_scale=tw.text_scale * 2,
                 text_padding=tw.text_padding,
             )
-        return f, res
+        return f
+
+    def gen(self, source: str | int) -> Generator:
+        for f, out, timetaken in self.model.gen(source):
+            det, fallback = out
+            yield self(f, det, timetaken), fallback
+
+    def from_frame(self, f: np.ndarray) -> np.ndarray:
+        start = time.time()
+        det, fallback = self.model.from_frame(f)
+        return self(f, det, time.time() - start), fallback
 
     def update(self, f: np.ndarray):
         scale = f.shape[0] / self.reso[1]
@@ -511,20 +584,35 @@ class Annotator:
             self.zones[i].center = get_polygon_center(polygon=z.polygon)
 
     @classmethod
-    def ui(
-        cls,
-        model: Model,
-        reso: tuple[int, int],
-        background: Image.Image | None,
-    ):
+    def ui(cls, source: str | int):
+        model = Model.ui()
+
+        if source:
+            reso = VideoInfo.from_video_path(source).resolution_wh
+            background = first_frame(source)
+        else:
+            reso = maxcam()
+            background = None
+            if sb.checkbox('Annotate from selfie'):
+                background = st.camera_input('Shoot')
+            if background:
+                model.predict_image(background)
+                background = Image.open(background).resize(reso)
+
         width, height = reso
         task = model.info.task
+        if task in ('pose', 'classify'):
+            return cls(model, reso)
+
         c1, c2 = st.columns([1, 4])
         mode = c1.selectbox(
             'Draw',
-            ('line', 'rect', 'polygon'),
+            ('line', 'rect', 'polygon')
+            if model.tracker is not None
+            else ('rect', 'polygon'),
             label_visibility='collapsed',
         )
+
         bg = background if c2.checkbox('Background', value=True) else None
         stroke, key = ('#fff', 'e') if bg is None else ('#000', 'f')
         canvas = mycanvas(stroke, width, height, mode, bg, key)

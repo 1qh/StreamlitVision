@@ -89,7 +89,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 Object detection only:
 
 - [x] RT-DETR
-- [ ] YOLO-NAS
+- [x] YOLO-NAS
 - [ ] YOLOv6
 - [x] YOLOv5
   - [x] new v5u models
