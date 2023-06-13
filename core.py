@@ -34,8 +34,6 @@ from supervision import (
 from ultralytics import NAS, RTDETR, YOLO
 from vidgear.gears import VideoGear
 
-from color import colors, colors_rgb
-
 
 def cvt(f: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
@@ -72,10 +70,6 @@ def rgb2ycc(rgb: np.ndarray) -> np.ndarray:
     return np.stack([y, cb, cr], axis=-1)
 
 
-def closest(rgb: np.ndarray, ycc_colors: np.ndarray) -> int:
-    return np.argmin(np.sum((ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2, axis=1))
-
-
 def avg_rgb(f: np.ndarray) -> np.ndarray:
     return cv2.kmeans(
         cvt(f.reshape(-1, 3).astype(np.float32)),
@@ -87,13 +81,22 @@ def avg_rgb(f: np.ndarray) -> np.ndarray:
     )[2][0].astype(np.int32)
 
 
-def filter_by_vals(d: dict) -> list[int | str]:
+def filter_by_vals(d: dict, text: str) -> list[int | str]:
     all = list(d.values())
 
-    if sb.checkbox('Custom Classes'):
+    if sb.checkbox(text):
         return [
             all.index(i) for i in sb.multiselect(' ', all, label_visibility='collapsed')
         ]
+    else:
+        return list(d.keys())
+
+
+def filter_by_keys(d: dict, text: str) -> list[int | str]:
+    all = list(d.keys())
+
+    if sb.checkbox(text):
+        return [i for i in sb.multiselect(' ', all, label_visibility='collapsed')]
     else:
         return list(d.keys())
 
@@ -128,10 +131,6 @@ def first_frame(path: str) -> Image.Image:
     frame = Image.fromarray(cvt(stream.read()))
     stream.stop()
     return frame
-
-
-ycc_colors = rgb2ycc(colors_rgb)
-colors_rgb = [tuple(map(int, i)) for i in colors_rgb]
 
 
 @dataclass
@@ -393,7 +392,7 @@ class Model:
             model = RTDETR(path)
 
         conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-        classes = filter_by_vals(model.model.names)
+        classes = filter_by_vals(model.model.names, 'Custom Classes')
 
         return cls(
             ModelInfo(
@@ -407,6 +406,40 @@ class Model:
         )
 
 
+class ColorClassifier:
+    def __init__(
+        self,
+        d: dict = {
+            'red': [255, 0, 0],
+            'orange': [255, 100, 0],
+            'yellow': [255, 200, 0],
+            'green': [0, 150, 0],
+            'blue': [0, 100, 255],
+            'purple': [100, 0, 255],
+            'black': [0, 0, 0],
+            'white': [255, 255, 255],
+        },
+    ):
+        self.d = d
+        self.color_names = list(d.keys())
+
+        if len(self.color_names) > 0:
+            rgb_mat = np.array(list(d.values())).astype(np.uint8)
+            self.ycc_colors = rgb2ycc(rgb_mat)
+            self.rgb_colors = [tuple(map(int, i)) for i in rgb_mat]
+        else:
+            self.ycc_colors = []
+            self.rgb_colors = []
+
+    def closest(self, rgb: np.ndarray) -> int:
+        return np.argmin(
+            np.sum(
+                (self.ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2,
+                axis=1,
+            )
+        )
+
+
 class Annotator:
     def __init__(
         self,
@@ -415,12 +448,14 @@ class Annotator:
         draw: Draw = Draw(),
         display: Display = Display(),
         tweak: Tweak = Tweak(),
+        color_clf: ColorClassifier = ColorClassifier(),
     ):
         self.model = model
         self.reso = reso
         self.draw = draw
         self.display = display
         self.tweak = tweak
+        self.color_clf = color_clf
         self.unneeded = self.model.info.task in ('classify', 'pose')
         self.ls = [
             LineZone(start=Point(i[0][0], i[0][1]), end=Point(i[1][0], i[1][1]))
@@ -463,6 +498,7 @@ class Annotator:
             'draw': asdict(self.draw),
             'display': asdict(self.display),
             'tweak': asdict(self.tweak),
+            'color': self.color_clf.d,
         }
 
     def dump(self, path: str):
@@ -478,6 +514,7 @@ class Annotator:
             display=from_dict(Display, d['display']),
             tweak=from_dict(Tweak, d['tweak']),
             draw=from_dict(Draw, d['draw']),
+            color_clf=ColorClassifier(d['color']),
         )
 
     def __call__(
@@ -487,12 +524,16 @@ class Annotator:
         timetaken,
     ) -> np.ndarray:
         begin = time.time()
+
         dp = self.display
         tw = self.tweak
+        color_names = self.color_clf.color_names
+        rgb_colors = self.color_clf.rgb_colors
+
         names = self.model.names
         xyxy = det.xyxy.astype(int)
 
-        if dp.predict_color:
+        if dp.predict_color and len(color_names) > 0:
             naive = False
             centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]) // 2
 
@@ -511,11 +552,11 @@ class Annotator:
 
                 cropped = crop(f, bb)
                 rgb = f[y, x] if naive else avg_rgb(cropped)
-                predict = closest(rgb, ycc_colors)
-                r, g, b = colors_rgb[predict]
+                predict = self.color_clf.closest(rgb)
+                r, g, b = rgb_colors[predict]
                 draw_text(
                     scene=f,
-                    text=colors[predict],
+                    text=color_names[predict],
                     text_anchor=Point(x=x, y=y + 20),
                     text_color=Color(255 - r, 255 - g, 255 - b),
                     text_scale=tw.text_scale,
@@ -686,8 +727,15 @@ class Annotator:
             else 0.0,
             area=c6.checkbox('Area', value=True),
         )
+        color_clf = ColorClassifier()
         if display.predict_color:
-            for color, rgb in zip(colors, colors_rgb):
+            d = color_clf.d
+            names = filter_by_keys(d, 'Custom Colors')
+            d = {k: d[k] for k in names}
+            color_clf = ColorClassifier(d)
+            rgb_colors = color_clf.rgb_colors
+            color_names = color_clf.color_names
+            for color, rgb in zip(color_names, rgb_colors):
                 sb.color_picker(f'{color}', value=rgb2hex(rgb))
 
         tweak = Tweak(
@@ -704,4 +752,5 @@ class Annotator:
             display=display,
             tweak=tweak,
             draw=draw,
+            color_clf=color_clf,
         )
