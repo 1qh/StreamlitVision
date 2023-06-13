@@ -29,7 +29,7 @@ from supervision import (
     draw_text,
     get_polygon_center,
 )
-from ultralytics import RTDETR, YOLO
+from ultralytics import NAS, RTDETR, YOLO
 from vidgear.gears import VideoGear
 
 from color import colors, colors_rgb
@@ -212,6 +212,9 @@ class Model:
         if ver == 'rtdetr':
             self.model = RTDETR(path)
             self.names = []  # not available
+        elif ver == 'NAS':
+            self.model = NAS(path)
+            self.names = self.model.model.names
         else:
             self.model = YOLO(path) if not self.legacy else yolov5.load(path)
             self.names = self.model.names
@@ -313,17 +316,19 @@ class Model:
 
             ver = c1.selectbox(
                 'Version',
-                ('v8', 'v6', 'v5u', 'v5', 'v3'),
+                ('v8', 'NAS', 'v6', 'v5u', 'v5', 'v3'),
                 label_visibility='collapsed',
             )
             legacy = ver == 'v5'
+            is_nas = ver == 'NAS'
+            sizes = ('n', 's', 'm', 'l', 'x')
             has_sizes = ver != 'v3'
             has_tasks = ver == 'v8'
 
             size = (
                 c2.selectbox(
                     'Size',
-                    ('n', 's', 'm', 'l', 'x'),
+                    sizes if not is_nas else sizes[1:4],
                     label_visibility='collapsed',
                 )
                 if has_sizes and not custom
@@ -341,29 +346,36 @@ class Model:
             if custom:
                 path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
             else:
-                path = f"yolo{ver[:2]}{size if has_sizes else ''}{suffix[task] if has_tasks else ''}{ver[2] if len(ver) > 2 else ''}.pt"
+                v = ver[:2] if not is_nas else '_nas_'
+                s = size if has_sizes else ''
+                t = suffix[task] if has_tasks else ''
+                u = ver[2] if len(ver) > 2 and ver[2] == 'u' else ''
+                path = f'yolo{v}{s}{t}{u}.pt'
 
             if legacy:
                 model = yolov5.load(path)
             else:
-                model = YOLO(path)
-                task = model.overrides['task']
+                if is_nas:
+                    model = NAS(path)
+                else:
+                    model = YOLO(path)
+                    task = model.overrides['task']
+                    path = model.ckpt_path
 
-                if track:
-                    tracker = (
-                        c4.selectbox(
-                            'Tracker',
-                            ['No track', 'bytetrack', 'botsort'],
-                            label_visibility='collapsed',
+                    if track:
+                        tracker = (
+                            c4.selectbox(
+                                'Tracker',
+                                ['No track', 'bytetrack', 'botsort'],
+                                label_visibility='collapsed',
+                            )
+                            if task != 'classify'
+                            else None
                         )
-                        if task != 'classify'
-                        else None
-                    )
-                    tracker = tracker if tracker != 'No track' else None
+                        tracker = tracker if tracker != 'No track' else None
 
                 if custom:
                     c3.subheader(f'{task.capitalize()}')
-                path = model.ckpt_path
 
         elif family == 'RT-DETR':
             ver = 'rtdetr'
