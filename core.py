@@ -1,7 +1,9 @@
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from glob import glob
+from pathlib import Path
 from subprocess import check_output
 from typing import Generator
 
@@ -94,6 +96,12 @@ def filter_by_vals(d: dict) -> list[int | str]:
         ]
     else:
         return list(d.keys())
+
+
+def exe_button(place, text: str, cmd: str):
+    if place.button(text):
+        st.code(cmd, language='bash')
+        os.system(cmd)
 
 
 def mycanvas(stroke, width, height, mode, bg, key):
@@ -594,6 +602,27 @@ class Annotator:
         for i, z in enumerate(self.zs):
             self.zones[i].zone = z
             self.zones[i].center = get_polygon_center(polygon=z.polygon)
+
+    def native(self, source: str | int):
+        cmd = f'{Path(__file__).parent}/native.py --source {source}'
+        c1, c2 = st.columns([1, 3])
+        c2.subheader(f"Native run on {source if source != 0 else 'camera'}")
+        option = c2.radio(
+            ' ',
+            ('Realtime inference', 'Save to video'),
+            label_visibility='collapsed',
+        )
+        if option == 'Realtime inference':
+            exe_button(c1, 'Show with OpenCV', cmd)
+        elif option == 'Save to video':
+            saveto = c1.text_input(
+                ' ',
+                'result.mp4',
+                label_visibility='collapsed',
+            )
+            exe_button(c1, 'Save with OpenCV', f'{cmd} --saveto {saveto}')
+        if c1.button('Save config to json'):
+            self.dump('config.json')
 
     @classmethod
     def ui(cls, source: str | int):

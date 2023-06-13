@@ -80,34 +80,6 @@ def prepare(path: str):
         session_state['path'] = path
 
 
-def exe_button(place, text: str, cmd: str):
-    if place.button(text):
-        st.code(cmd, language='bash')
-        os.system(cmd)
-
-
-def native_run(place, source: str | int, an: Annotator):
-    cmd = f'{Path(__file__).parent}/native.py --source {source}'
-    c1, c2 = place.columns([1, 3])
-    c2.subheader(f"Native run on {source if source != 0 else 'camera'}")
-    option = c2.radio(
-        ' ',
-        ('Realtime inference', 'Save to video'),
-        label_visibility='collapsed',
-    )
-    if option == 'Realtime inference':
-        exe_button(c1, 'Show with OpenCV', cmd)
-    elif option == 'Save to video':
-        saveto = c1.text_input(
-            ' ',
-            'result.mp4',
-            label_visibility='collapsed',
-        )
-        exe_button(c1, 'Save with OpenCV', f'{cmd} --saveto {saveto}')
-    if c1.button('Save config to json'):
-        an.dump('config.json')
-
-
 def main(state):
     st_config()
     running = sb.checkbox('Realtime inference (slower than native)')
@@ -121,10 +93,10 @@ def main(state):
         file = None
 
         an = Annotator.ui(0)
+        an.native(0)
         reso = an.reso
         width, height = reso
 
-        native_run(st, 0, an)
         cap = cv2.VideoCapture(0)
         codec = cv2.VideoWriter_fourcc(*'MJPG')
         cap.set(6, codec)
@@ -204,7 +176,7 @@ def main(state):
                 '''
             )
             an = Annotator.ui(path)
-            native_run(st, path, an)
+            an.native(path)
 
             count = 0
 
