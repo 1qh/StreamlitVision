@@ -545,7 +545,7 @@ class Annotator:
 
         maxlen = tw.trail_length
 
-        if dp.trail and not self.unneeded:
+        if dp.trail and not self.unneeded and tracker_ids is not None:
             for center, c, t in zip(centers, class_ids, tracker_ids):
                 t -= 1
                 if t is not None:
