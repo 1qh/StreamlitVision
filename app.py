@@ -93,8 +93,7 @@ def main(state):
 
         an = Annotator.ui(0)
         an.native(0)
-        reso = an.reso
-        width, height = reso
+        width, height = an.reso
 
         cap = cv2.VideoCapture(0)
         codec = cv2.VideoWriter_fourcc(*'MJPG')

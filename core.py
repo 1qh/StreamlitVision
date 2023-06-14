@@ -558,7 +558,6 @@ class Annotator:
 
             for k, (q, color) in enumerate(zip(self.ques, self.trail_colors)):
                 if k + 1 not in tracker_ids:
-                    # q.clear()
                     continue
 
                 for i in range(1, len(q)):
@@ -570,10 +569,7 @@ class Annotator:
                         q[i - 1],
                         q[i],
                         color.as_bgr(),
-                        min(
-                            int((maxlen / i) ** (1 / 2) * tw.thickness * 2),
-                            tw.thickness * 3,
-                        ),
+                        max(1, int((1 - (i / maxlen)) * ((tw.thickness + 1) * 2))),
                     )
         if dp.predict_color and len(color_names) > 0:
             naive = False

@@ -8,7 +8,7 @@ from core import Annotator, maxcam
 
 
 def app(source=0, config='config.json', saveto=None):
-    if '.' not in source and int(source) in [i for i in range(-1, 2, 1)]:
+    if '.' not in source and int(source) in range(-1, 2, 1):
         source = int(source)
         reso = maxcam()
     else:
