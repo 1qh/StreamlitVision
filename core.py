@@ -81,24 +81,24 @@ def avg_rgb(f: np.ndarray) -> np.ndarray:
     )[2][0].astype(np.int32)
 
 
-def filter_by_vals(d: dict, text: str) -> list[int | str]:
-    all = list(d.values())
+def filter_by_vals(d: dict, place, text: str) -> list[int | str]:
+    a = list(d.values())
 
-    if sb.checkbox(text):
+    if place.checkbox(text):
         return [
-            all.index(i) for i in sb.multiselect(' ', all, label_visibility='collapsed')
+            a.index(i) for i in place.multiselect(' ', a, label_visibility='collapsed')
         ]
     else:
         return list(d.keys())
 
 
-def filter_by_keys(d: dict, text: str) -> list[int | str]:
-    all = list(d.keys())
+def filter_by_keys(d: dict, place, text: str) -> list[int | str]:
+    a = list(d.keys())
 
-    if sb.checkbox(text):
-        return [i for i in sb.multiselect(' ', all, label_visibility='collapsed')]
+    if place.checkbox(text):
+        return [i for i in place.multiselect(' ', a, label_visibility='collapsed')]
     else:
-        return list(d.keys())
+        return a
 
 
 def exe_button(place, text: str, cmd: str):
@@ -304,11 +304,13 @@ class Model:
 
     @classmethod
     def ui(cls, track=True):
+        ex = sb.expander('Model', expanded=True)
         tracker = None
-        family = sb.radio(
-            'Model family',
+        family = ex.radio(
+            ' ',
             ('YOLO', 'RT-DETR'),
             horizontal=True,
+            label_visibility='collapsed',
         )
         if family == 'YOLO':
             suffix = {
@@ -317,9 +319,9 @@ class Model:
                 'Classify': '-cls',
                 'Pose': '-pose',
             }
-            custom = sb.checkbox('Custom weight')
-            c1, c2 = sb.columns(2)
-            c3, c4 = sb.columns(2)
+            custom = ex.checkbox('Custom weight')
+            c1, c2 = ex.columns(2)
+            c3, c4 = ex.columns(2)
 
             ver = c1.selectbox(
                 'Version',
@@ -387,12 +389,12 @@ class Model:
         elif family == 'RT-DETR':
             ver = 'rtdetr'
             task = 'detect'
-            size = sb.selectbox('Size', ('l', 'x'))
+            size = ex.selectbox('Size', ('l', 'x'))
             path = f'{ver}-{size}.pt'
             model = RTDETR(path)
 
-        conf = sb.slider('Threshold', max_value=1.0, value=0.25)
-        classes = filter_by_vals(model.model.names, 'Custom Classes')
+        classes = filter_by_vals(model.model.names, ex, 'Custom Classes')
+        conf = ex.slider('Threshold', max_value=1.0, value=0.25)
 
         return cls(
             ModelInfo(
@@ -427,9 +429,6 @@ class ColorClassifier:
             rgb_mat = np.array(list(d.values())).astype(np.uint8)
             self.ycc_colors = rgb2ycc(rgb_mat)
             self.rgb_colors = [tuple(map(int, i)) for i in rgb_mat]
-        else:
-            self.ycc_colors = []
-            self.rgb_colors = []
 
     def closest(self, rgb: np.ndarray) -> int:
         return np.argmin(
@@ -673,13 +672,38 @@ class Annotator:
             reso = VideoInfo.from_video_path(source).resolution_wh
             background = first_frame(source)
         else:
+            ex = sb.expander('For camera', expanded=True)
             reso = maxcam()
+            if ex.checkbox('Custom resolution', value=True):
+                c1, c2 = ex.columns(2)
+                reso = (
+                    c1.number_input(
+                        'Width',
+                        0,
+                        7680,
+                        640,
+                        1,
+                    ),
+                    c2.number_input(
+                        'Height',
+                        0,
+                        4320,
+                        480,
+                        1,
+                    ),
+                )
             background = None
-            if sb.checkbox('Annotate from selfie'):
-                background = st.camera_input('Shoot')
+            if ex.checkbox('Annotate from image'):
+                if ex.checkbox('Upload'):
+                    background = ex.file_uploader(
+                        ' ', label_visibility='collapsed', key='u'
+                    )
+                if ex.checkbox('Shoot'):
+                    background = st.camera_input('Shoot')
             if background:
                 model.predict_image(background)
                 background = Image.open(background).resize(reso)
+            ex.write('**Notes:** Track & line counts only work on native run')
 
         width, height = reso
         task = model.info.task
@@ -712,38 +736,48 @@ class Annotator:
                     Image.fromarray(canvas.image_data),
                 ).save('canvas.png')
 
-        c1, c2 = sb.columns(2)
-        c3, c4 = sb.columns(2)
-        c5, c6 = sb.columns(2)
+        ex1 = sb.expander('Toggle')
+        ex2 = sb.expander('Colors')
+        ex3 = sb.expander('Visual')
+        c1, c2 = ex1.columns(2)
+        c3, c4 = ex1.columns(2)
+        c5, c6 = ex1.columns(2)
+
+        fps = c1.checkbox('Show FPS', value=True)
+        predict_color = c2.checkbox('Predict color')
+        box = c3.checkbox('Box', value=True)
+        skip_label = not c4.checkbox('Label', value=True)
+        mask = c6.checkbox('Mask', value=True) if task == 'segment' else False
+        mask_opacity = ex1.slider('Opacity', 0.0, 1.0, 0.5) if mask else 0.0
+        area = c5.checkbox('Area', value=True)
 
         display = Display(
-            fps=c1.checkbox('Show FPS', value=True),
-            predict_color=c2.checkbox('Predict color'),
-            box=c3.checkbox('Box', value=True),
-            skip_label=not c4.checkbox('Label', value=True),
-            mask=c5.checkbox('Mask', value=True) if task == 'segment' else False,
-            mask_opacity=sb.slider('Opacity', 0.0, 1.0, 0.5)
-            if task == 'segment'
-            else 0.0,
-            area=c6.checkbox('Area', value=True),
+            fps=fps,
+            predict_color=predict_color,
+            box=box,
+            skip_label=skip_label,
+            mask=mask,
+            mask_opacity=mask_opacity,
+            area=area,
         )
         color_clf = ColorClassifier()
         if display.predict_color:
             d = color_clf.d
-            names = filter_by_keys(d, 'Custom Colors')
-            d = {k: d[k] for k in names}
-            color_clf = ColorClassifier(d)
-            rgb_colors = color_clf.rgb_colors
-            color_names = color_clf.color_names
-            for color, rgb in zip(color_names, rgb_colors):
-                sb.color_picker(f'{color}', value=rgb2hex(rgb))
+            names = filter_by_keys(d, ex2, 'Custom')
+            if len(names) > 0:
+                d = {k: d[k] for k in names}
+                color_clf = ColorClassifier(d)
+                rgb_colors = color_clf.rgb_colors
+                color_names = color_clf.color_names
+                for color, rgb in zip(color_names, rgb_colors):
+                    ex2.color_picker(f'{color}', value=rgb2hex(rgb))
 
         tweak = Tweak(
-            thickness=sb.slider('Thickness', 0, 10, 1),
-            text_scale=sb.slider('Text size', 0.0, 2.0, 0.5),
-            text_offset=sb.slider('Text offset', 0, 10, 1) if len(draw.lines) else 0,
-            text_padding=sb.slider('Text padding', 0, 10, 2),
-            text_color=sb.color_picker('Text color', '#000000'),
+            thickness=ex3.slider('Thickness', 0, 10, 1),
+            text_scale=ex3.slider('Text size', 0.0, 2.0, 0.5),
+            text_offset=ex3.slider('Text offset', 0, 10, 1) if len(draw.lines) else 0,
+            text_padding=ex3.slider('Text padding', 0, 10, 2),
+            text_color=ex3.color_picker('Text color', '#000000'),
         )
 
         return cls(

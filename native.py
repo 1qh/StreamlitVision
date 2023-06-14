@@ -15,20 +15,20 @@ def app(source=0, config='config.json', saveto=None):
         vid = VideoInfo.from_video_path(source)
         reso = vid.resolution_wh
 
-    an = Annotator.load(config, reso)
+    gen = Annotator.load(config, reso).gen(source)
 
-    writer = WriteGear(output=saveto if saveto is not None else 'out.mp4')
     if saveto is None:
-        for f, _ in an.gen(source):
+        for f, _ in gen:
             cv2.imshow('', f)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     else:
-        for f, _ in an.gen(source):
+        writer = WriteGear(output=saveto)
+        for f, _ in gen:
             writer.write(f)
+        writer.close()
 
     cv2.destroyAllWindows()
-    writer.close()
 
 
 if __name__ == '__main__':

@@ -58,20 +58,21 @@ def trim_vid(path: str, begin: str, end: str) -> str:
     return trim
 
 
-def prepare(path: str):
+def prepare(path: str, place):
     vid = VideoInfo.from_video_path(path)
 
     if which('ffmpeg'):
-        trimmed = sb.checkbox('Trim')
+        trimmed = place.checkbox('Trim')
         if trimmed:
             length = int(vid.total_frames / vid.fps)
-            begin, end = sb.slider(
-                'Trim by second',
+            begin, end = place.slider(
+                ' ',
                 value=(0, length),
                 max_value=length,
+                label_visibility='collapsed',
             )
             begin, end = hms(begin), hms(end)
-            if sb.button(f'Trim from {begin[3:]} to {end[3:]}'):
+            if place.button(f'Trim from {begin[3:]} to {end[3:]}'):
                 path = trim_vid(path, begin, end)
                 session_state['path'] = path
         else:
@@ -82,14 +83,12 @@ def prepare(path: str):
 
 def main(state):
     st_config()
+    file = sb.file_uploader(' ', label_visibility='collapsed')
     running = sb.checkbox('Realtime inference (slower than native)')
     usecam = sb.checkbox('Use camera')
-    file = sb.file_uploader(' ', label_visibility='collapsed')
     mt = st.empty()
 
     if usecam:
-        ex = sb.expander('Notes:')
-        ex.write('Track & line counts only work on native run')
         file = None
 
         an = Annotator.ui(0)
@@ -161,7 +160,7 @@ def main(state):
             with open(path, 'wb') as up:
                 up.write(file.read())
 
-            prepare(path)
+            prepare(path, ex)
             path = session_state['path']
             vid = VideoInfo.from_video_path(path)
             reso = vid.resolution_wh
