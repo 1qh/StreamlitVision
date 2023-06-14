@@ -45,6 +45,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
     - Turn tracking on/off
     - Adjust confidence threshold
     - Filter by class
+    - Object motion path
     - Object color classification
     - Trim video
 
@@ -61,6 +62,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
     - Label
     - Mask
     - Area
+    - Trail
     - FPS
 
   - Adjust

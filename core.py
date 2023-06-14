@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from glob import glob
 from pathlib import Path
@@ -140,12 +141,14 @@ class Display:
     box: bool = True
     skip_label: bool = False
     mask: bool = True
-    mask_opacity: float = 0.5
     area: bool = True
+    trail: bool = True
 
 
 @dataclass
 class Tweak:
+    trail_length: int = 24
+    mask_opacity: float = 0.5
     thickness: int = 1
     text_scale: float = 0.5
     text_offset: int = 1
@@ -490,6 +493,9 @@ class Annotator:
             for i, z in enumerate(self.zs)
         ]
         self.mask = MaskAnnotator()
+        self.pallet = ColorPalette.default()
+        self.ques = []
+        self.trail_colors = []
 
     def __dict__(self):
         return {
@@ -519,27 +525,62 @@ class Annotator:
     def __call__(
         self,
         f: np.ndarray,
-        det,
-        timetaken,
+        det: Detections,
+        timetaken: float,
     ) -> np.ndarray:
         begin = time.time()
 
         dp = self.display
         tw = self.tweak
+        names = self.model.names
+
         color_names = self.color_clf.color_names
         rgb_colors = self.color_clf.rgb_colors
 
-        names = self.model.names
         xyxy = det.xyxy.astype(int)
+        class_ids = det.class_id
+        tracker_ids = det.tracker_id
 
+        centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]) // 2
+
+        maxlen = tw.trail_length
+
+        if dp.trail and not self.unneeded:
+            for center, c, t in zip(centers, class_ids, tracker_ids):
+                t -= 1
+                if t is not None:
+                    if t >= len(self.ques):
+                        self.ques += [deque(maxlen=maxlen)] * (t - len(self.ques) + 1)
+                        self.trail_colors += [None] * (t - len(self.trail_colors) + 1)
+                        self.trail_colors.insert(t, self.pallet.by_idx(c))
+                    self.ques[t].appendleft(tuple(center))
+                    self.trail_colors[t] = self.pallet.by_idx(c)
+
+            for k, (q, color) in enumerate(zip(self.ques, self.trail_colors)):
+                if k + 1 not in tracker_ids:
+                    # q.clear()
+                    continue
+
+                for i in range(1, len(q)):
+                    if q[i - 1] is None or q[i] is None:
+                        continue
+
+                    cv2.line(
+                        f,
+                        q[i - 1],
+                        q[i],
+                        color.as_bgr(),
+                        min(
+                            int((maxlen / i) ** (1 / 2) * tw.thickness * 2),
+                            tw.thickness * 3,
+                        ),
+                    )
         if dp.predict_color and len(color_names) > 0:
             naive = False
-            centers = (xyxy[:, [0, 1]] + xyxy[:, [2, 3]]) // 2
 
-            for i in range(xyxy.shape[0]):
-                x = centers[i][0]
-                y = centers[i][1]
-                bb = xyxy[i]
+            for center, bb in zip(centers, xyxy):
+                x = center[0]
+                y = center[1]
 
                 # for shirt color of person
                 # w = bb[2] - bb[0]
@@ -550,6 +591,9 @@ class Annotator:
                 # ]
 
                 cropped = crop(f, bb)
+                if cropped.shape[0] == 0 or cropped.shape[1] == 0:
+                    continue
+
                 rgb = f[y, x] if naive else avg_rgb(cropped)
                 predict = self.color_clf.closest(rgb)
                 r, g, b = rgb_colors[predict]
@@ -577,7 +621,7 @@ class Annotator:
             f = self.mask.annotate(
                 scene=f,
                 detections=det,
-                opacity=dp.mask_opacity,
+                opacity=tw.mask_opacity,
             )
         if dp.area:
             for t, a in zip(det.area, xyxy.astype(int)):
@@ -667,7 +711,7 @@ class Annotator:
     @classmethod
     def ui(cls, source: str | int):
         model = Model.ui()
-
+        is_track = model.info.tracker is not None
         if source:
             reso = VideoInfo.from_video_path(source).resolution_wh
             background = first_frame(source)
@@ -742,14 +786,15 @@ class Annotator:
         c1, c2 = ex1.columns(2)
         c3, c4 = ex1.columns(2)
         c5, c6 = ex1.columns(2)
+        c7, c8 = ex1.columns(2)
 
         fps = c1.checkbox('Show FPS', value=True)
         predict_color = c2.checkbox('Predict color')
         box = c3.checkbox('Box', value=True)
         skip_label = not c4.checkbox('Label', value=True)
-        mask = c6.checkbox('Mask', value=True) if task == 'segment' else False
-        mask_opacity = ex1.slider('Opacity', 0.0, 1.0, 0.5) if mask else 0.0
+        mask = c7.checkbox('Mask', value=True) if task == 'segment' else False
         area = c5.checkbox('Area', value=True)
+        trail = c6.checkbox('Trail', value=True) if is_track else False
 
         display = Display(
             fps=fps,
@@ -757,8 +802,8 @@ class Annotator:
             box=box,
             skip_label=skip_label,
             mask=mask,
-            mask_opacity=mask_opacity,
             area=area,
+            trail=trail,
         )
         color_clf = ColorClassifier()
         if display.predict_color:
@@ -773,6 +818,8 @@ class Annotator:
                     ex2.color_picker(f'{color}', value=rgb2hex(rgb))
 
         tweak = Tweak(
+            trail_length=ex3.slider('Trail length', 1, 100, 24) if is_track else 0,
+            mask_opacity=ex3.slider('Opacity', 0.0, 1.0, 0.5) if mask else 0.0,
             thickness=ex3.slider('Thickness', 0, 10, 1),
             text_scale=ex3.slider('Text size', 0.0, 2.0, 0.5),
             text_offset=ex3.slider('Text offset', 0, 10, 1) if len(draw.lines) else 0,
