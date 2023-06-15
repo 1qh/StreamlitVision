@@ -49,7 +49,7 @@ def maxcam() -> tuple[int, int]:
         .decode()
         .split('x')
     )
-    width, height = [int(i) for i in reso] if len(reso) == 2 else (640, 360)
+    width, height = [int(i) for i in reso] if len(reso) == 2 else (640, 480)
     return width, height
 
 
@@ -202,6 +202,7 @@ class ModelInfo:
     ver: str = 'v8'
     task: str = 'detect'
     conf: float = 0.25
+    iou: float = 0.5
     tracker: str | None = None
 
 
@@ -212,6 +213,7 @@ class Model:
     ):
         self.classes = info.classes
         self.conf = info.conf
+        self.iou = info.iou
         self.tracker = info.tracker
 
         path = info.path
@@ -219,19 +221,21 @@ class Model:
 
         self.legacy = ver == 'v5'
 
-        if ver == 'rtdetr':
-            self.model = RTDETR(path)
-            self.names = []  # not available
-        elif ver == 'NAS':
-            self.model = NAS(path)
-            self.names = self.model.model.names
-        else:
-            self.model = YOLO(path) if not self.legacy else yolov5.load(path)
-            self.names = self.model.names
+        match ver:
+            case 'rtdetr':
+                self.model = RTDETR(path)
+                self.names = []  # not available
+            case 'NAS':
+                self.model = NAS(path)
+                self.names = self.model.model.names
+            case _:
+                self.model = YOLO(path) if not self.legacy else yolov5.load(path)
+                self.names = self.model.names
 
         if self.legacy:
             self.model.classes = self.classes
             self.model.conf = self.conf
+            self.model.iou = self.iou
 
         self.info = info
 
@@ -245,6 +249,8 @@ class Model:
                 stream=True,
                 classes=self.classes,
                 conf=self.conf,
+                iou=self.iou,
+                half=True,
                 retina_masks=True,
             )
             if self.tracker is None
@@ -253,8 +259,11 @@ class Model:
                 stream=True,
                 classes=self.classes,
                 conf=self.conf,
+                iou=self.iou,
+                half=True,
                 retina_masks=True,
                 tracker=f'{self.tracker}.yaml',
+                persist=True,
             )
         )
 
@@ -285,6 +294,8 @@ class Model:
             f,
             classes=self.classes,
             conf=self.conf,
+            iou=self.iou,
+            half=True,
             retina_masks=True,
         )[0]
         if res.boxes is not None:
@@ -309,95 +320,102 @@ class Model:
     def ui(cls, track=True):
         ex = sb.expander('Model', expanded=True)
         tracker = None
-        family = ex.radio(
+
+        match ex.radio(
             ' ',
             ('YOLO', 'RT-DETR'),
             horizontal=True,
             label_visibility='collapsed',
-        )
-        if family == 'YOLO':
-            suffix = {
-                'Detect': '',
-                'Segment': '-seg',
-                'Classify': '-cls',
-                'Pose': '-pose',
-            }
-            custom = ex.checkbox('Custom weight')
-            c1, c2 = ex.columns(2)
-            c3, c4 = ex.columns(2)
+        ):
+            case 'YOLO':
+                suffix = {
+                    'Detect': '',
+                    'Segment': '-seg',
+                    'Classify': '-cls',
+                    'Pose': '-pose',
+                }
+                custom = ex.checkbox('Custom weight')
+                c1, c2 = ex.columns(2)
+                c3, c4 = ex.columns(2)
 
-            ver = c1.selectbox(
-                'Version',
-                ('v8', 'NAS', 'v6', 'v5u', 'v5', 'v3'),
-                label_visibility='collapsed',
-            )
-            legacy = ver == 'v5'
-            is_nas = ver == 'NAS'
-            sizes = ('n', 's', 'm', 'l', 'x')
-            has_sizes = ver != 'v3'
-            has_tasks = ver == 'v8'
-
-            size = (
-                c2.selectbox(
-                    'Size',
-                    sizes if not is_nas else sizes[1:4],
+                ver = c1.selectbox(
+                    'Version',
+                    ('v8', 'NAS', 'v6', 'v5u', 'v5', 'v3'),
                     label_visibility='collapsed',
                 )
-                if has_sizes and not custom
-                else ''
-            )
-            task = (
-                c3.selectbox(
-                    'Task',
-                    list(suffix.keys()),
-                    label_visibility='collapsed',
+                legacy = ver == 'v5'
+                is_nas = ver == 'NAS'
+                sizes = ('n', 's', 'm', 'l', 'x')
+                has_sizes = ver != 'v3'
+                has_tasks = ver == 'v8'
+
+                size = (
+                    c2.selectbox(
+                        'Size',
+                        sizes if not is_nas else sizes[1:4],
+                        label_visibility='collapsed',
+                    )
+                    if has_sizes and not custom
+                    else ''
                 )
-                if has_tasks and not custom
-                else 'detect'
-            )
-            if custom:
-                path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
-            else:
-                v = ver[:2] if not is_nas else '_nas_'
-                s = size if has_sizes else ''
-                t = suffix[task] if has_tasks else ''
-                u = ver[2] if len(ver) > 2 and ver[2] == 'u' else ''
-                path = f'yolo{v}{s}{t}{u}.pt'
-
-            if legacy:
-                model = yolov5.load(path)
-            else:
-                if is_nas:
-                    model = NAS(path)
-                else:
-                    model = YOLO(path)
-                    task = model.overrides['task']
-                    path = model.ckpt_path
-
-                    if track:
-                        tracker = (
-                            c4.selectbox(
-                                'Tracker',
-                                ['No track', 'bytetrack', 'botsort'],
-                                label_visibility='collapsed',
-                            )
-                            if task != 'classify'
-                            else None
-                        )
-                        tracker = tracker if tracker != 'No track' else None
-
+                task = (
+                    c3.selectbox(
+                        'Task',
+                        list(suffix.keys()),
+                        label_visibility='collapsed',
+                    )
+                    if has_tasks and not custom
+                    else 'detect'
+                )
                 if custom:
-                    c3.subheader(f'{task.capitalize()}')
+                    path = c2.selectbox(' ', glob('*.pt'), label_visibility='collapsed')
+                else:
+                    v = ver[:2] if not is_nas else '_nas_'
+                    s = size if has_sizes else ''
+                    t = suffix[task] if has_tasks else ''
+                    u = ver[2] if len(ver) > 2 and ver[2] == 'u' else ''
+                    path = f'yolo{v}{s}{t}{u}.pt'
 
-        elif family == 'RT-DETR':
-            ver = 'rtdetr'
-            task = 'detect'
-            size = ex.selectbox('Size', ('l', 'x'))
-            path = f'{ver}-{size}.pt'
-            model = RTDETR(path)
+                if legacy:
+                    model = yolov5.load(path)
+                else:
+                    if is_nas:
+                        try:
+                            model = NAS(path)
+                        except FileNotFoundError:
+                            st.warning(
+                                'You might want to go to https://docs.ultralytics.com/models to download the weights first.'
+                            )
+                    else:
+                        model = YOLO(path)
+                        task = model.overrides['task']
+                        path = model.ckpt_path
+
+                        if track:
+                            tracker = (
+                                c4.selectbox(
+                                    'Tracker',
+                                    ['No track', 'bytetrack', 'botsort'],
+                                    label_visibility='collapsed',
+                                )
+                                if task != 'classify'
+                                else None
+                            )
+                            tracker = tracker if tracker != 'No track' else None
+
+                    if custom:
+                        c3.subheader(f'{task.capitalize()}')
+
+            case 'RT-DETR':
+                ver = 'rtdetr'
+                task = 'detect'
+                size = ex.selectbox('Size', ('l', 'x'))
+                path = f'{ver}-{size}.pt'
+                model = RTDETR(path)
 
         classes = filter_by_vals(model.model.names, ex, 'Custom Classes')
         conf = ex.slider('Threshold', max_value=1.0, value=0.25)
+        iou = ex.slider('IoU', max_value=1.0, value=0.5)
 
         return cls(
             ModelInfo(
@@ -406,6 +424,7 @@ class Model:
                 ver=ver,
                 task=task,
                 conf=conf,
+                iou=iou,
                 tracker=tracker,
             )
         )
@@ -687,20 +706,20 @@ class Annotator:
         cmd = f'{Path(__file__).parent}/native.py --source {source}'
         c1, c2 = st.columns([1, 3])
         c2.subheader(f"Native run on {source if source != 0 else 'camera'}")
-        option = c2.radio(
+        match c2.radio(
             ' ',
             ('Realtime inference', 'Save to video'),
             label_visibility='collapsed',
-        )
-        if option == 'Realtime inference':
-            exe_button(c1, 'Show with OpenCV', cmd)
-        elif option == 'Save to video':
-            saveto = c1.text_input(
-                ' ',
-                'result.mp4',
-                label_visibility='collapsed',
-            )
-            exe_button(c1, 'Save with OpenCV', f'{cmd} --saveto {saveto}')
+        ):
+            case 'Realtime inference':
+                exe_button(c1, 'Show with OpenCV', cmd)
+            case 'Save to video':
+                saveto = c1.text_input(
+                    ' ',
+                    'result.mp4',
+                    label_visibility='collapsed',
+                )
+                exe_button(c1, 'Save with OpenCV', f'{cmd} --saveto {saveto}')
         if c1.button('Save config to json'):
             self.dump('config.json')
 
