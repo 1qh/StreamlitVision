@@ -54,7 +54,7 @@ def maxcam() -> tuple[int, int]:
 
 
 def plur(n: int, s: str) -> str:
-    return f"\n- {n} {s}{'s'[:n^1]}" if n else ''
+    return f"{n} {s}{'s'[:n^1]}" if n else ''
 
 
 def rgb2hex(rgb: tuple[int, int, int]) -> str:
@@ -137,6 +137,7 @@ def first_frame(path: str) -> Image.Image:
 @dataclass
 class Display:
     fps: bool = True
+    count: bool = True
     predict_color: bool = False
     box: bool = True
     skip_label: bool = False
@@ -162,7 +163,14 @@ class Draw:
     zones: list = field(default_factory=list)
 
     def __str__(self) -> str:
-        return plur(len(self.lines), 'line') + plur(len(self.zones), 'zone')
+        s = ''
+        l = len(self.lines)
+        z = len(self.zones)
+        if l:
+            s += '\n - ' + plur(l, 'line')
+        if z:
+            s += '\n - ' + plur(z, 'zone')
+        return s
 
     def __len__(self) -> int:
         return len(self.lines) + len(self.zones)
@@ -567,26 +575,19 @@ class Annotator:
         if dp.trail and not self.unneeded and tracker_ids is not None:
             for center, c, t in zip(centers, class_ids, tracker_ids):
                 t -= 1
-                if t is not None:
-                    if t >= len(self.ques):
-                        self.ques += [deque(maxlen=maxlen)] * (t - len(self.ques) + 1)
-                        self.trail_colors += [None] * (t - len(self.trail_colors) + 1)
-                        self.trail_colors.insert(t, self.pallet.by_idx(c))
-                    self.ques[t].appendleft(tuple(center))
-                    self.trail_colors[t] = self.pallet.by_idx(c)
-
+                if t >= len(self.ques):
+                    self.ques += [deque(maxlen=maxlen)] * (t - len(self.ques) + 1)
+                    self.trail_colors += [None] * (t - len(self.trail_colors) + 1)
+                self.ques[t].appendleft(tuple(center))
+                self.trail_colors[t] = self.pallet.by_idx(c)
             for k, (q, color) in enumerate(zip(self.ques, self.trail_colors)):
                 if k + 1 not in tracker_ids:
                     continue
-
-                for i in range(1, len(q)):
-                    if q[i - 1] is None or q[i] is None:
-                        continue
-
+                for i in range(len(q) - 1):
                     cv2.line(
                         f,
-                        q[i - 1],
                         q[i],
+                        q[i + 1],
                         color.as_bgr(),
                         max(1, int((1 - (i / maxlen)) * ((tw.thickness + 1) * 2))),
                     )
@@ -656,6 +657,23 @@ class Annotator:
             z.trigger(det)
             f = zone.annotate(f)
 
+        if dp.count and len(names):
+            for i, c in enumerate(np.bincount(class_ids)):
+                if c:
+                    bg_color = self.pallet.by_idx(i)
+                    r, g, b = bg_color.as_rgb()
+                    draw_text(
+                        scene=f,
+                        text=plur(c, names[i]),
+                        text_anchor=Point(
+                            x=f.shape[1] - 60,
+                            y=12 + int(i * tw.text_scale * 18),
+                        ),
+                        text_color=Color(255 - r, 255 - g, 255 - b),
+                        text_scale=tw.text_scale,
+                        text_padding=tw.text_padding,
+                        background_color=self.pallet.by_idx(i),
+                    )
         if dp.fps:
             fps = 1 / (time.time() - begin + timetaken)
             draw_text(
@@ -727,6 +745,8 @@ class Annotator:
     def ui(cls, source: str | int):
         model = Model.ui()
         is_track = model.info.tracker is not None
+        names = model.names
+
         if source:
             reso = VideoInfo.from_video_path(source).resolution_wh
             background = first_frame(source)
@@ -804,15 +824,17 @@ class Annotator:
         c7, c8 = ex1.columns(2)
 
         fps = c1.checkbox('Show FPS', value=True)
-        predict_color = c2.checkbox('Predict color')
+        count = c2.checkbox('Count', value=True) if len(names) else False
         box = c3.checkbox('Box', value=True)
         skip_label = not c4.checkbox('Label', value=True)
-        mask = c7.checkbox('Mask', value=True) if task == 'segment' else False
         area = c5.checkbox('Area', value=True)
-        trail = c6.checkbox('Trail', value=True) if is_track else False
+        predict_color = c6.checkbox('Predict color')
+        trail = c7.checkbox('Trail', value=True) if is_track else False
+        mask = c8.checkbox('Mask', value=True) if task == 'segment' else False
 
         display = Display(
             fps=fps,
+            count=count,
             predict_color=predict_color,
             box=box,
             skip_label=skip_label,
