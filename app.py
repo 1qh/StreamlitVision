@@ -150,8 +150,7 @@ def main(state):
         ex = sb.expander('Uploaded file')
         if 'image' in file.type:
             ex.image(file)
-            model = Model.ui(track=False)
-            model.predict_image(file)
+            Model.ui(track=False).predict_image(file)
 
         elif 'video' in file.type:
             ex.video(file)

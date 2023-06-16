@@ -63,6 +63,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
     - Mask
     - Area
     - Trail
+    - Count
     - FPS
 
   - Adjust
@@ -73,6 +74,7 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
     - Text offset
     - Line thickness
     - Mask opacity
+    - Trail length
 
 - **PRODUCTION READY**
 
@@ -88,14 +90,17 @@ pip install -i https://download.pytorch.org/whl/cpu torch torchvision
 - [x] All YOLOv8 models (Detect, Segment, Pose, Classify)
   - [x] With tracking
 
-Object detection only:
+Object detection:
 
 - [x] RT-DETR
 - [x] YOLO-NAS
-- [ ] YOLOv6
 - [x] YOLOv5
   - [x] new v5u models
   - [x] original v5 models
 - [x] YOLOv3
+
+Instance Segmentation
+
+- [x] SAM
 
 </details>

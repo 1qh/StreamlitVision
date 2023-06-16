@@ -32,7 +32,7 @@ from supervision import (
     draw_text,
     get_polygon_center,
 )
-from ultralytics import NAS, RTDETR, YOLO
+from ultralytics import NAS, RTDETR, SAM, YOLO
 from vidgear.gears import VideoGear
 
 
@@ -108,7 +108,14 @@ def exe_button(place, text: str, cmd: str):
         os.system(cmd)
 
 
-def mycanvas(stroke, width, height, mode, bg, key):
+def mycanvas(
+    stroke: str,
+    width: int,
+    height: int,
+    mode: str,
+    bg: Image.Image,
+    key: str,
+):
     return st_canvas(
         stroke_width=2,
         fill_color='#ffffff55',
@@ -135,12 +142,12 @@ def first_frame(path: str) -> Image.Image:
 
 
 @dataclass
-class Display:
+class Toggle:
     fps: bool = True
     count: bool = True
-    predict_color: bool = False
+    color: bool = False
     box: bool = True
-    skip_label: bool = False
+    label: bool = True
     mask: bool = True
     area: bool = True
     trail: bool = True
@@ -230,6 +237,9 @@ class Model:
         self.legacy = ver == 'v5'
 
         match ver:
+            case 'sam':
+                self.model = SAM(path)
+                self.names = []
             case 'rtdetr':
                 self.model = RTDETR(path)
                 self.names = []  # not available
@@ -331,7 +341,7 @@ class Model:
 
         match ex.radio(
             ' ',
-            ('YOLO', 'RT-DETR'),
+            ('YOLO', 'RT-DETR', 'SAM'),
             horizontal=True,
             label_visibility='collapsed',
         ):
@@ -348,7 +358,7 @@ class Model:
 
                 ver = c1.selectbox(
                     'Version',
-                    ('v8', 'NAS', 'v6', 'v5u', 'v5', 'v3'),
+                    ('v8', 'NAS', 'v5u', 'v5', 'v3'),
                     label_visibility='collapsed',
                 )
                 legacy = ver == 'v5'
@@ -403,7 +413,7 @@ class Model:
                             tracker = (
                                 c4.selectbox(
                                     'Tracker',
-                                    ['No track', 'bytetrack', 'botsort'],
+                                    ['bytetrack', 'botsort', 'No track'],
                                     label_visibility='collapsed',
                                 )
                                 if task != 'classify'
@@ -420,10 +430,21 @@ class Model:
                 size = ex.selectbox('Size', ('l', 'x'))
                 path = f'{ver}-{size}.pt'
                 model = RTDETR(path)
+            case 'SAM':
+                ver = 'sam'
+                task = 'segment'
+                size = ex.selectbox('Size', ('b', 'l'))
+                path = f'{ver}_{size}.pt'
+                model = SAM(path)
 
-        classes = filter_by_vals(model.model.names, ex, 'Custom Classes')
-        conf = ex.slider('Threshold', max_value=1.0, value=0.25)
-        iou = ex.slider('IoU', max_value=1.0, value=0.5)
+        if ver != 'sam':
+            classes = filter_by_vals(model.model.names, ex, 'Custom Classes')
+            conf = ex.slider('Threshold', max_value=1.0, value=0.25)
+            iou = ex.slider('IoU', max_value=1.0, value=0.5)
+        else:
+            classes = []
+            conf = 0.25
+            iou = 0.5
 
         return cls(
             ModelInfo(
@@ -453,17 +474,17 @@ class ColorClassifier:
         },
     ):
         self.d = d
-        self.color_names = list(d.keys())
+        self.names = list(d.keys())
 
-        if len(self.color_names) > 0:
+        if len(self.names) > 0:
             rgb_mat = np.array(list(d.values())).astype(np.uint8)
-            self.ycc_colors = rgb2ycc(rgb_mat)
-            self.rgb_colors = [tuple(map(int, i)) for i in rgb_mat]
+            self.ycc = rgb2ycc(rgb_mat)
+            self.rgb = [tuple(map(int, i)) for i in rgb_mat]
 
-    def closest(self, rgb: np.ndarray) -> int:
+    def closest(self, _rgb: np.ndarray) -> int:
         return np.argmin(
             np.sum(
-                (self.ycc_colors - rgb2ycc(rgb[np.newaxis])) ** 2,
+                (self.ycc - rgb2ycc(_rgb[np.newaxis])) ** 2,
                 axis=1,
             )
         )
@@ -475,14 +496,14 @@ class Annotator:
         model: Model,
         reso: tuple[int, int],
         draw: Draw = Draw(),
-        display: Display = Display(),
+        toggle: Toggle = Toggle(),
         tweak: Tweak = Tweak(),
         color_clf: ColorClassifier = ColorClassifier(),
     ):
         self.model = model
         self.reso = reso
         self.draw = draw
-        self.display = display
+        self.toggle = toggle
         self.tweak = tweak
         self.color_clf = color_clf
         self.unneeded = self.model.info.task in ('classify', 'pose')
@@ -528,7 +549,7 @@ class Annotator:
         return {
             'model': asdict(self.model.info),
             'draw': asdict(self.draw),
-            'display': asdict(self.display),
+            'toggle': asdict(self.toggle),
             'tweak': asdict(self.tweak),
             'color': self.color_clf.d,
         }
@@ -543,7 +564,7 @@ class Annotator:
         return cls(
             model=Model(from_dict(ModelInfo, d['model'])),
             reso=reso,
-            display=from_dict(Display, d['display']),
+            toggle=from_dict(Toggle, d['toggle']),
             tweak=from_dict(Tweak, d['tweak']),
             draw=from_dict(Draw, d['draw']),
             color_clf=ColorClassifier(d['color']),
@@ -557,12 +578,12 @@ class Annotator:
     ) -> np.ndarray:
         begin = time.time()
 
-        dp = self.display
+        tg = self.toggle
         tw = self.tweak
         names = self.model.names
 
-        color_names = self.color_clf.color_names
-        rgb_colors = self.color_clf.rgb_colors
+        color_names = self.color_clf.names
+        rgb_colors = self.color_clf.rgb
 
         xyxy = det.xyxy.astype(int)
         class_ids = det.class_id
@@ -572,7 +593,7 @@ class Annotator:
 
         maxlen = tw.trail_length
 
-        if dp.trail and not self.unneeded and tracker_ids is not None:
+        if tg.trail and not self.unneeded and tracker_ids is not None:
             for center, c, t in zip(centers, class_ids, tracker_ids):
                 t -= 1
                 if t >= len(self.ques):
@@ -591,7 +612,7 @@ class Annotator:
                         color.as_bgr(),
                         max(1, int((1 - (i / maxlen)) * ((tw.thickness + 1) * 2))),
                     )
-        if dp.predict_color and len(color_names) > 0:
+        if tg.color and len(color_names):
             naive = False
 
             for center, bb in zip(centers, xyxy):
@@ -622,7 +643,7 @@ class Annotator:
                     text_padding=tw.text_padding,
                     background_color=Color(r, g, b),
                 )
-        if dp.box:
+        if tg.box:
             f = self.box.annotate(
                 scene=f,
                 detections=det,
@@ -631,20 +652,16 @@ class Annotator:
                     + (f' {track_id}' if track_id else '')
                     for _, _, conf, cl, track_id in det
                 ],
-                skip_label=dp.skip_label,
+                skip_label=not tg.label,
             )
-        if dp.mask:
-            f = self.mask.annotate(
-                scene=f,
-                detections=det,
-                opacity=tw.mask_opacity,
-            )
-        if dp.area:
-            for t, a in zip(det.area, xyxy.astype(int)):
+        if tg.mask:
+            f = self.mask.annotate(scene=f, detections=det, opacity=tw.mask_opacity)
+        if tg.area:
+            for a, c in zip(det.area.astype(int), centers):
                 draw_text(
                     scene=f,
-                    text=f'{int(t)}',
-                    text_anchor=Point(x=(a[0] + a[2]) // 2, y=(a[1] + a[3]) // 2),
+                    text=str(a)[:-1],
+                    text_anchor=Point(x=c[0], y=c[1]),
                     text_color=self.text_color,
                     text_scale=tw.text_scale,
                     text_padding=tw.text_padding,
@@ -657,11 +674,11 @@ class Annotator:
             z.trigger(det)
             f = zone.annotate(f)
 
-        if dp.count and len(names):
+        if tg.count and len(names):
             for i, c in enumerate(np.bincount(class_ids)):
                 if c:
-                    bg_color = self.pallet.by_idx(i)
-                    r, g, b = bg_color.as_rgb()
+                    bg = self.pallet.by_idx(i)
+                    r, g, b = bg.as_rgb()
                     draw_text(
                         scene=f,
                         text=plur(c, names[i]),
@@ -672,9 +689,9 @@ class Annotator:
                         text_color=Color(255 - r, 255 - g, 255 - b),
                         text_scale=tw.text_scale,
                         text_padding=tw.text_padding,
-                        background_color=self.pallet.by_idx(i),
+                        background_color=bg,
                     )
-        if dp.fps:
+        if tg.fps:
             fps = 1 / (time.time() - begin + timetaken)
             draw_text(
                 scene=f,
@@ -756,20 +773,8 @@ class Annotator:
             if ex.checkbox('Custom resolution', value=True):
                 c1, c2 = ex.columns(2)
                 reso = (
-                    c1.number_input(
-                        'Width',
-                        0,
-                        7680,
-                        640,
-                        1,
-                    ),
-                    c2.number_input(
-                        'Height',
-                        0,
-                        4320,
-                        480,
-                        1,
-                    ),
+                    c1.number_input('Width', 1, 7680, 640, 1),
+                    c2.number_input('Height', 1, 4320, 480, 1),
                 )
             background = None
             if ex.checkbox('Annotate from image'):
@@ -797,17 +802,14 @@ class Annotator:
             else ('rect', 'polygon'),
             label_visibility='collapsed',
         )
-
         bg = background if c2.checkbox('Background', value=True) else None
         stroke, key = ('#fff', 'e') if bg is None else ('#000', 'f')
         canvas = mycanvas(stroke, width, height, mode, bg, key)
 
         draw = Draw()
-
         if canvas.json_data is not None:
             draw = Draw.from_canvas(canvas.json_data['objects'])
             c2.markdown(draw)
-
         if canvas.image_data is not None and len(draw) > 0:
             if c1.button('Export canvas image'):
                 Image.alpha_composite(
@@ -823,37 +825,34 @@ class Annotator:
         c5, c6 = ex1.columns(2)
         c7, c8 = ex1.columns(2)
 
-        fps = c1.checkbox('Show FPS', value=True)
+        fps = c1.checkbox('FPS', value=True)
         count = c2.checkbox('Count', value=True) if len(names) else False
         box = c3.checkbox('Box', value=True)
-        skip_label = not c4.checkbox('Label', value=True)
+        label = c4.checkbox('Label', value=True) if box else False
         area = c5.checkbox('Area', value=True)
-        predict_color = c6.checkbox('Predict color')
+        color = c6.checkbox('Color classify')
         trail = c7.checkbox('Trail', value=True) if is_track else False
         mask = c8.checkbox('Mask', value=True) if task == 'segment' else False
 
-        display = Display(
+        toggle = Toggle(
             fps=fps,
             count=count,
-            predict_color=predict_color,
+            color=color,
             box=box,
-            skip_label=skip_label,
+            label=label,
             mask=mask,
             area=area,
             trail=trail,
         )
-        color_clf = ColorClassifier()
-        if display.predict_color:
-            d = color_clf.d
+        clf = ColorClassifier()
+        if toggle.color:
+            d = clf.d
             names = filter_by_keys(d, ex2, 'Custom')
             if len(names) > 0:
                 d = {k: d[k] for k in names}
-                color_clf = ColorClassifier(d)
-                rgb_colors = color_clf.rgb_colors
-                color_names = color_clf.color_names
-                for color, rgb in zip(color_names, rgb_colors):
-                    ex2.color_picker(f'{color}', value=rgb2hex(rgb))
-
+                clf = ColorClassifier(d)
+                for c, rgb in zip(clf.names, clf.rgb):
+                    ex2.color_picker(f'{c}', value=rgb2hex(rgb))
         tweak = Tweak(
             trail_length=ex3.slider('Trail length', 1, 100, 24) if is_track else 0,
             mask_opacity=ex3.slider('Opacity', 0.0, 1.0, 0.5) if mask else 0.0,
@@ -863,12 +862,11 @@ class Annotator:
             text_padding=ex3.slider('Text padding', 0, 10, 2),
             text_color=ex3.color_picker('Text color', '#000000'),
         )
-
         return cls(
             model=model,
             reso=reso,
-            display=display,
+            toggle=toggle,
             tweak=tweak,
             draw=draw,
-            color_clf=color_clf,
+            color_clf=clf,
         )
