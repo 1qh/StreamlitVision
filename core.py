@@ -15,6 +15,7 @@ import yolov5
 from dacite import from_dict
 from PIL import Image
 from streamlit import sidebar as sb
+from streamlit.delta_generator import DeltaGenerator
 from streamlit_drawable_canvas import st_canvas
 from supervision import (
     BoxAnnotator,
@@ -82,7 +83,7 @@ def avg_rgb(f: np.ndarray) -> np.ndarray:
     )[2][0].astype(np.int32)
 
 
-def filter_by_vals(d: dict, place, text: str) -> list[int | str]:
+def filter_by_vals(d: dict, place: DeltaGenerator, text: str) -> list[int | str]:
     a = list(d.values())
 
     if place.checkbox(text):
@@ -93,7 +94,7 @@ def filter_by_vals(d: dict, place, text: str) -> list[int | str]:
         return list(d.keys())
 
 
-def filter_by_keys(d: dict, place, text: str) -> list[int | str]:
+def filter_by_keys(d: dict, place: DeltaGenerator, text: str) -> list[int | str]:
     a = list(d.keys())
 
     if place.checkbox(text):
@@ -102,7 +103,7 @@ def filter_by_keys(d: dict, place, text: str) -> list[int | str]:
         return a
 
 
-def exe_button(place, text: str, cmd: str):
+def exe_button(place: DeltaGenerator, text: str, cmd: str):
     if place.button(text):
         st.code(cmd, language='bash')
         os.system(cmd)
@@ -128,7 +129,7 @@ def mycanvas(
     )
 
 
-def legacy_generator(stream, model) -> Generator:
+def legacy_generator(stream: VideoGear, model) -> Generator:
     while True:
         f = stream.read()
         yield f, model(f)
@@ -321,7 +322,7 @@ class Model:
 
         return Detections.empty(), cvt(res.plot())
 
-    def predict_image(self, file):
+    def predict_image(self, file: str | bytes | Path):
         f = np.array(Image.open(file))
         if self.legacy:
             det = Detections.from_yolov5(self.model(f))
@@ -335,7 +336,7 @@ class Model:
         st.image(f)
 
     @classmethod
-    def ui(cls, track=True):
+    def ui(cls, track: bool = True):
         ex = sb.expander('Model', expanded=True)
         tracker = None
 
