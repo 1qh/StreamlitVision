@@ -35,6 +35,9 @@ def st_config():
     st.markdown(
         """
     <style>
+    div[data-testid="stExpander"] div[role="button"] p {
+    font-size: 1.5rem;
+    }
     div.stButton button {width: 100%;}
     div.block-container {padding-top:2rem}
     footer {visibility: hidden;}
