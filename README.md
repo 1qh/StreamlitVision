@@ -4,7 +4,6 @@
 
 ```
 pip install -r requirements.txt
-pip install lap
 ```
 
 <details><summary>(For non-GPU users)</summary>
