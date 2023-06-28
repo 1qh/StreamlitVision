@@ -22,6 +22,14 @@ if 'path' not in session_state:
     session_state['path'] = ''
 
 
+def local_css(file: str):
+    with open(file) as f:
+        st.markdown(
+            f'<style>{f.read()}</style>',
+            unsafe_allow_html=True,
+        )
+
+
 def st_config():
     set_page_config(
         page_icon='🎥',
@@ -32,23 +40,42 @@ def st_config():
             'Report a bug': 'https://github.com/1qh/ComputerVisionWebUI/issues/new',
         },
     )
-    st.markdown(
-        """
-    <style>
-    div[data-testid="stExpander"] div[role="button"] p {
-    font-size: 1.5rem;
-    }
-    div.stButton button {width: 100%;}
-    div.block-container {padding-top:2rem}
-    footer {visibility: hidden;}
-    @font-face {font-family: 'SF Pro Display';}
-    html, body, [class*="css"]  {font-family: 'SF Pro Display';}
-    thead tr th:first-child {display:none}
-    tbody th {display:none}
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
+    try:
+        local_css('style.css')
+    except FileNotFoundError:
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stExpander"] div[role="button"] p {
+              font-size: 1.5rem;
+            }
+            div.stButton button {
+              width: 100%;
+              border-radius: 20px;
+            }
+            div.block-container {
+              padding-top: 2rem;
+            }
+            footer {
+              visibility: hidden;
+            }
+            @font-face {
+              font-family: "SF Pro Display";
+            }
+            html,
+            body,
+            [class*="css"] {
+              font-family: "SF Pro Display";
+            }
+            thead tr th:first-child {
+              display: none;
+            }
+            tbody th {
+              display: none;
+            }
+            </style>
+            """
+        )
 
 
 def hms(s: int) -> str:

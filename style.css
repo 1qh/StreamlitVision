@@ -1,0 +1,27 @@
+div[data-testid="stExpander"] div[role="button"] p {
+  font-size: 1.5rem;
+}
+div.stButton button {
+  width: 100%;
+  border-radius: 20px;
+}
+div.block-container {
+  padding-top: 2rem;
+}
+footer {
+  visibility: hidden;
+}
+@font-face {
+  font-family: "SF Pro Display";
+}
+html,
+body,
+[class*="css"] {
+  font-family: "SF Pro Display";
+}
+thead tr th:first-child {
+  display: none;
+}
+tbody th {
+  display: none;
+}
