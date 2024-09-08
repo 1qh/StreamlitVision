@@ -1,0 +1,12 @@
+services:
+  app:
+    image: ultralytics/ultralytics
+    working_dir: /w
+    volumes:
+      - .:/w
+    command: >
+      sh -c " pip install -Ur requirements.txt
+              streamlit run app.py
+              "
+    ports:
+      - 8501:8501

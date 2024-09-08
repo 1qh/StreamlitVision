@@ -1,0 +1,46 @@
+{
+  "ruff.format.args": [
+    "--config=ruff.toml"
+  ],
+  "pylint.args": [
+    "--rcfile=.pylintrc",
+  ],
+  "cSpell.words": [
+    "abso",
+    "anns",
+    "argmin",
+    "astype",
+    "avfoundation",
+    "baseweb",
+    "bincount",
+    "botsort",
+    "bytetrack",
+    "dropzone",
+    "dtype",
+    "ffprobe",
+    "fourcc",
+    "fromarray",
+    "gmtime",
+    "imshow",
+    "kmeans",
+    "linezone",
+    "mjpg",
+    "ndarray",
+    "newaxis",
+    "noti",
+    "reso",
+    "resos",
+    "rtdetr",
+    "selectbox",
+    "streamlit",
+    "testid",
+    "torchvision",
+    "typer",
+    "ultralytics",
+    "unsnake",
+    "vidgear",
+    "webrtc",
+    "xyxy",
+    "yolo"
+  ]
+}

@@ -1,0 +1,16 @@
+*.7z
+*.engine
+*.jpeg
+*.jpg
+*.mp3
+*.mp4
+*.onnx
+*.png
+*.pt
+*.pth
+*.txt
+*.wav
+.DS_Store
+_*
+config.json
+runs/

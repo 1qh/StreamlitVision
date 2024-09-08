@@ -1,0 +1,6 @@
+streamlit_drawable_canvas
+streamlit_webrtc
+supervision[assets]
+typer
+ultralytics
+vidgear

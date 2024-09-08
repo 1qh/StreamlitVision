@@ -1,0 +1,9 @@
+[MAIN]
+extension-pkg-whitelist=cv2,av
+
+[FORMAT]
+indent-string='  '
+max-line-length=120
+
+[MESSAGES CONTROL]
+disable=use-dict-literal,too-few-public-methods,missing-function-docstring,missing-class-docstring,missing-module-docstring,invalid-name,too-many-instance-attributes,too-many-arguments,line-too-long

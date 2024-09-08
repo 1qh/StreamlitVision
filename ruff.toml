@@ -1,0 +1,24 @@
+fix = true
+indent-width = 2
+line-length = 120
+preview = true
+required-version = '>=0.6.2'
+respect-gitignore = false
+target-version = 'py312'
+unsafe-fixes = true
+
+[format]
+docstring-code-format = true
+quote-style = 'single'
+preview = true
+
+[lint]
+preview = true
+
+[lint.flake8-quotes]
+docstring-quotes = 'single'
+inline-quotes = 'single'
+multiline-quotes = 'single'
+
+[lint.pydocstyle]
+convention = 'google'
