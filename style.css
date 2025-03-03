@@ -1,0 +1,141 @@
+.block-container {
+  padding: 0;
+  padding-left: 0.8rem;
+}
+
+footer {
+  display: none;
+}
+
+.stButton button {
+  width: 100%;
+  border-radius: 24px;
+}
+
+.stTooltipHoverTarget {
+  width: 100%;
+}
+
+.stTooltipContent {
+  width: 100%;
+}
+
+.stExpander {
+  width: fit-content;
+  min-width: 12rem;
+}
+
+.stExpander details {
+  border-radius: 12px;
+}
+
+.stExpander details summary {
+  padding: 0;
+  padding-left: 10px;
+  padding-right: 3px;
+}
+
+div[data-testid='stExpander'] {
+  width: fit-content;
+  min-width: 12rem;
+}
+
+div[data-testid='stExpander'] details {
+  border-radius: 12px;
+}
+
+div[data-testid='stExpander'] details summary {
+  padding: 0;
+  padding-left: 10px;
+  padding-right: 3px;
+}
+
+.stCheckbox {
+  height: fit-content;
+  min-height: 0;
+}
+
+.stFileUploader section div {
+  display: none;
+}
+
+.stFileUploader section {
+  padding: 0;
+  width: fit-content;
+}
+
+.stFileUploader div {
+  line-height: 1;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+div[data-testid='stDecoration'] {
+  display: none;
+}
+
+header[data-testid='stHeader'] {
+  height: 0;
+}
+
+section[data-testid='stFileUploaderDropzone'] {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+button[data-testid='stBaseButton-secondary'] {
+  padding: 1px 7px;
+  min-height: 0;
+}
+
+div[data-testid='stToolbar'] {
+  top: 0;
+  right: 0;
+}
+
+div[data-testid='stSidebarCollapsedControl'] {
+  top: 0;
+  left: 0;
+}
+
+div[data-testid='collapsedControl'] {
+  top: 0;
+  left: 0;
+}
+
+div[data-testid='stSidebarHeader'] {
+  display: none;
+}
+
+div[data-testid='stSidebarUserContent'] {
+  padding: 10px;
+}
+
+div[data-testid='stVerticalBlock'] {
+  gap: 0.3rem;
+}
+
+div[data-testid='stExpanderDetails'] {
+  padding: 0.5rem;
+  padding-top: 0;
+}
+
+div[data-baseweb='slider'] {
+  padding: 0;
+}
+
+div[data-testid='stSliderTickBar'] {
+  padding: 0;
+}
+
+div[data-testid='stNumberInputContainer'] {
+  height: 1.5rem;
+}
+
+label[data-testid='stWidgetLabel'] {
+  margin: 0;
+}
+
+button[data-baseweb='tab'] {
+  width: 100%;
+}
